@@ -5,19 +5,20 @@ use std::str::FromStr;
 
 use regex::Regex;
 use simple_error::bail;
+use subprocess;
 
 type AttributeId = u32;
 type DeviceId = u32;
 type DeviceStatus = String;
 
 #[derive(Debug, Eq, PartialEq)]
-struct ShortDevice {
+pub struct ShortDevice {
     id: DeviceId,
     name: String,
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct DeviceAttribute {
+pub struct DeviceAttribute {
     id: AttributeId,
     description: String,
     attribute_type: String,
@@ -28,7 +29,7 @@ struct DeviceAttribute {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct LongDevice {
+pub struct LongDevice {
     // These probably don't change often
     gang_id: Option<u32>,
     generic_device_type: Option<u8>,
@@ -43,7 +44,7 @@ struct LongDevice {
     attributes: Vec<DeviceAttribute>,
 }
 
-trait DeviceController {
+pub trait DeviceController {
     fn list(&self) -> Result<Vec<ShortDevice>, Box<dyn Error>>;
     fn describe(&self, master_id: DeviceId) -> Result<LongDevice, Box<dyn Error>>;
     fn set(
@@ -54,8 +55,23 @@ trait DeviceController {
     ) -> Result<(), Box<dyn Error>>;
 }
 
-struct AprontestController {
+pub struct AprontestController {
     runner: fn(command: String) -> Result<String, Box<dyn Error>>,
+}
+
+impl AprontestController {
+    pub fn new() -> AprontestController {
+        AprontestController{
+            runner: |cmd| {
+                let cmd_saved = cmd.clone();
+                let result = subprocess::Exec::shell(cmd).capture()?;
+                if !result.success() {
+                    bail!("Calling aprontest failed. Something went horribly wrong.\nCommand: {}\nStderr: {}", cmd_saved, result.stderr_str())
+                };
+                Ok(result.stdout_str())
+            }
+        }
+    }
 }
 
 lazy_static! {
@@ -188,6 +204,7 @@ impl DeviceController for AprontestController {
         attribute_id: AttributeId,
         value: &str,
     ) -> Result<(), Box<dyn Error>> {
+        // Yes - this is a security hole. Enjoy!
         (self.runner)(format!(
             "aprontest -u -m {} -t {} -v {}",
             master_id, attribute_id, value

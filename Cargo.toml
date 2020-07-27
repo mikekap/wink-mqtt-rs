@@ -1,3 +1,5 @@
+cargo-features = ["strip"]
+
 [package]
 name = "wink-mqtt-rs"
 version = "0.1.0"
@@ -21,3 +23,11 @@ lazy_static = "1.4.0"
 tokio = "0.2.22"
 slog-stdlog = "4.0.0"
 slog-scope = "4.3.0"
+subprocess = "0.2.4"
+
+[profile.release]
+opt-level = 'z'  # Optimize for size.
+lto = true
+codegen-units = 1
+panic = 'abort'
+strip = "symbols"

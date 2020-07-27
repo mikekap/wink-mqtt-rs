@@ -6,7 +6,7 @@ use std::error::Error;
 use std::fs;
 use std::io::BufReader;
 
-use clap::{App, Arg, ArgMatches, Clap, crate_version};
+use clap::{App, Arg, ArgMatches, crate_version};
 use mqtt_async_client::client::{
     Client, Publish, QoS, Subscribe, SubscribeTopic, Unsubscribe, UnsubscribeTopic,
 };
@@ -14,7 +14,7 @@ use rustls;
 use rustls_native_certs;
 use simple_error::bail;
 use slog::{Drain, info, LevelFilter, o, trace, warn};
-use slog_scope::{GlobalLoggerGuard, scope};
+use slog_scope::{GlobalLoggerGuard};
 use slog_term;
 use tokio::{
     self,
@@ -22,7 +22,8 @@ use tokio::{
 };
 use url::Url;
 
-mod apron;
+mod controller;
+mod syncer;
 
 fn init_logger(args: &ArgMatches) -> GlobalLoggerGuard {
     let min_log_level = match args.occurrences_of("verbose") {
@@ -83,7 +84,7 @@ fn init_mqtt_client(a: &ArgMatches) -> Result<Client, Box<dyn Error>> {
                 let mut pem = BufReader::new(fs::File::open(v)?);
                 match ssl_config.root_store.add_pem_file(&mut pem) {
                     Ok(_) => {}
-                    Err(v) => bail!("Failed to load root cert"),
+                    Err(_) => bail!("Failed to load root cert"),
                 };
             }
             None => {
@@ -135,6 +136,8 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             .about("Prefix (applied independently of --topic-prefix) to broadcast mqtt discovery information (see https://www.home-assistant.io/docs/mqtt/discovery/)")
             .default_value(""))
         .arg(Arg::with_name("discovery-listen-topic")
+            .required(false)
+            .long("--discovery-listen-topic")
             .about("Topic to listen to in order to (re)broadcast discovery information. Only applies if --discovery-prefix is set.")
             .default_value("homeassistant/status"))
         .get_matches();
