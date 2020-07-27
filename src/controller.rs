@@ -7,9 +7,9 @@ use regex::Regex;
 use simple_error::bail;
 use subprocess;
 
-type AttributeId = u32;
-type DeviceId = u32;
-type DeviceStatus = String;
+pub type AttributeId = u32;
+pub type DeviceId = u32;
+pub type DeviceStatus = String;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ShortDevice {
@@ -19,29 +19,29 @@ pub struct ShortDevice {
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct DeviceAttribute {
-    id: AttributeId,
-    description: String,
-    attribute_type: String,
-    supports_write: bool,
-    supports_read: bool,
-    current_value: Option<String>,
-    setting_value: Option<String>,
+    pub id: AttributeId,
+    pub description: String,
+    pub attribute_type: String,
+    pub supports_write: bool,
+    pub supports_read: bool,
+    pub current_value: Option<String>,
+    pub setting_value: Option<String>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct LongDevice {
     // These probably don't change often
-    gang_id: Option<u32>,
-    generic_device_type: Option<u8>,
-    specific_device_type: Option<u8>,
-    manufacturer_id: Option<u16>,
-    product_type: Option<u16>,
-    product_number: Option<u16>,
+    pub gang_id: Option<u32>,
+    pub generic_device_type: Option<u8>,
+    pub specific_device_type: Option<u8>,
+    pub manufacturer_id: Option<u16>,
+    pub product_type: Option<u16>,
+    pub product_number: Option<u16>,
 
-    id: DeviceId,
-    status: DeviceStatus,
-    name: String,
-    attributes: Vec<DeviceAttribute>,
+    pub id: DeviceId,
+    pub status: DeviceStatus,
+    pub name: String,
+    pub attributes: Vec<DeviceAttribute>,
 }
 
 pub trait DeviceController {

@@ -1,3 +1,5 @@
+#![feature(async_closure)]
+
 #[macro_use]
 extern crate lazy_static;
 
@@ -144,7 +146,10 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
 
     let _guard = init_logger(&matches);
 
-    let client = init_mqtt_client(&matches)?;
+    let mut client = init_mqtt_client(&matches)?;
+    let mut controller = controller::AprontestController::new();
+    let mut syncer = syncer::DeviceSyncer::new(&mut controller, &mut client, matches.value_of("topic-prefix").unwrap());
+    syncer.start();
 
     Ok(())
 }
