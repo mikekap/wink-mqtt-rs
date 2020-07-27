@@ -1,38 +1,28 @@
-mod apron;
-
-use mqtt_async_client::{
-    client::{
-        Client,
-        Publish,
-        QoS,
-        Subscribe,
-        SubscribeTopic,
-        Unsubscribe,
-        UnsubscribeTopic,
-    },
-};
-use tokio::{
-    self,
-    time::{
-        Duration,
-        timeout,
-    },
-};
-use clap::{Clap, crate_version, App, Arg, ArgMatches};
-use slog::{trace, o, warn, LevelFilter, Drain, info};
-use slog_term;
-use url::Url;
-use simple_error::bail;
-use rustls;
-use rustls_native_certs;
-use std::collections::HashMap;
-use std::io::BufReader;
-use std::fs;
-use std::error::Error;
-use slog_scope::{GlobalLoggerGuard, scope};
-
 #[macro_use]
 extern crate lazy_static;
+
+use std::collections::HashMap;
+use std::error::Error;
+use std::fs;
+use std::io::BufReader;
+
+use clap::{App, Arg, ArgMatches, Clap, crate_version};
+use mqtt_async_client::client::{
+    Client, Publish, QoS, Subscribe, SubscribeTopic, Unsubscribe, UnsubscribeTopic,
+};
+use rustls;
+use rustls_native_certs;
+use simple_error::bail;
+use slog::{Drain, info, LevelFilter, o, trace, warn};
+use slog_scope::{GlobalLoggerGuard, scope};
+use slog_term;
+use tokio::{
+    self,
+    time::{Duration, timeout},
+};
+use url::Url;
+
+mod apron;
 
 fn init_logger(args: &ArgMatches) -> GlobalLoggerGuard {
     let min_log_level = match args.occurrences_of("verbose") {
@@ -84,15 +74,15 @@ fn init_mqtt_client(a: &ArgMatches) -> Result<Client, Box<dyn Error>> {
         builder.set_password(Some(Vec::from(v)));
     }
 
-    let hash_query : HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+    let hash_query: HashMap<_, _> = parsed.query_pairs().into_owned().collect();
 
     if "mqtts" == parsed.scheme() {
         let mut ssl_config = rustls::ClientConfig::new();
         match hash_query.get("tls_root_cert") {
             Some(v) => {
                 let mut pem = BufReader::new(fs::File::open(v)?);
-                match ssl_config.root_store.add_pem_file(& mut pem) {
-                    Ok(_) => {},
+                match ssl_config.root_store.add_pem_file(&mut pem) {
+                    Ok(_) => {}
                     Err(v) => bail!("Failed to load root cert"),
                 };
             }

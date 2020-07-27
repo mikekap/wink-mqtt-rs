@@ -1,9 +1,10 @@
-use regex::Regex;
-use std::error::Error;
-use std::num::{ParseIntError};
-use simple_error::bail;
 use std::convert::TryFrom;
+use std::error::Error;
+use std::num::ParseIntError;
 use std::str::FromStr;
+
+use regex::Regex;
+use simple_error::bail;
 
 type AttributeId = u32;
 type DeviceId = u32;
@@ -39,17 +40,22 @@ struct LongDevice {
     id: DeviceId,
     status: DeviceStatus,
     name: String,
-    attributes: Vec<DeviceAttribute>
+    attributes: Vec<DeviceAttribute>,
 }
 
 trait DeviceController {
     fn list(&self) -> Result<Vec<ShortDevice>, Box<dyn Error>>;
     fn describe(&self, master_id: DeviceId) -> Result<LongDevice, Box<dyn Error>>;
-    fn set(&mut self, master_id: DeviceId, attribute_id: AttributeId, value: &str) -> Result<(), Box<dyn Error>>;
+    fn set(
+        &mut self,
+        master_id: DeviceId,
+        attribute_id: AttributeId,
+        value: &str,
+    ) -> Result<(), Box<dyn Error>>;
 }
 
 struct AprontestController {
-     runner: fn(command: String) -> Result<String, Box<dyn Error>>,
+    runner: fn(command: String) -> Result<String, Box<dyn Error>>,
 }
 
 lazy_static! {
@@ -99,10 +105,14 @@ impl DeviceController for AprontestController {
         let stdout = (self.runner)("aprontest -l".to_string())?;
         let devices = match LIST_REGEX.captures(&stdout) {
             Some(v) => v,
-            _ => bail!("Output doesn't match regex:\n{}", stdout)
-        }.name("devices").unwrap().as_str();
+            _ => bail!("Output doesn't match regex:\n{}", stdout),
+        }
+        .name("devices")
+        .unwrap()
+        .as_str();
 
-        Ok(DEVICE_REGEX.captures_iter(devices)
+        Ok(DEVICE_REGEX
+            .captures_iter(devices)
             .map(|m| ShortDevice {
                 id: m.name("id").unwrap().as_str().parse().unwrap(),
                 name: m.name("name").unwrap().as_str().to_string(),
@@ -119,16 +129,38 @@ impl DeviceController for AprontestController {
         };
 
         Ok(LongDevice {
-            gang_id: parsed.name("gang_id").map(|v| v.as_str().parse_numberish()).transpose()?,
-            generic_device_type: parsed.name("generic_device_type").map(|v| v.as_str().parse_numberish()).transpose()?,
-            specific_device_type: parsed.name("specific_device_type").map(|v| v.as_str().parse_numberish()).transpose()?,
-            manufacturer_id: parsed.name("manufacturer_id").map(|v| v.as_str().parse_numberish()).transpose()?,
-            product_type: parsed.name("product_type").map(|v| v.as_str().parse_numberish()).transpose()?,
-            product_number: parsed.name("product_number").map(|v| v.as_str().parse_numberish()).transpose()?,
+            gang_id: parsed
+                .name("gang_id")
+                .map(|v| v.as_str().parse_numberish())
+                .transpose()?,
+            generic_device_type: parsed
+                .name("generic_device_type")
+                .map(|v| v.as_str().parse_numberish())
+                .transpose()?,
+            specific_device_type: parsed
+                .name("specific_device_type")
+                .map(|v| v.as_str().parse_numberish())
+                .transpose()?,
+            manufacturer_id: parsed
+                .name("manufacturer_id")
+                .map(|v| v.as_str().parse_numberish())
+                .transpose()?,
+            product_type: parsed
+                .name("product_type")
+                .map(|v| v.as_str().parse_numberish())
+                .transpose()?,
+            product_number: parsed
+                .name("product_number")
+                .map(|v| v.as_str().parse_numberish())
+                .transpose()?,
             id: master_id,
-            status: parsed.name("device_status").map_or("", |v| v.as_str()).to_string(),
+            status: parsed
+                .name("device_status")
+                .map_or("", |v| v.as_str())
+                .to_string(),
             name: parsed.name("name").map_or("", |v| v.as_str()).to_string(),
-            attributes: ATTRIBUTE_REGEX.captures_iter(parsed.name("attributes").unwrap().as_str())
+            attributes: ATTRIBUTE_REGEX
+                .captures_iter(parsed.name("attributes").unwrap().as_str())
                 .map(|m| -> Result<DeviceAttribute, Box<dyn Error>> {
                     Ok(DeviceAttribute {
                         id: m.name("id").unwrap().as_str().parse()?,
@@ -143,15 +175,23 @@ impl DeviceController for AprontestController {
                         setting_value: match m.name("set").unwrap().as_str().trim() {
                             "" => None,
                             v => Some(v.to_string()),
-                        }
+                        },
                     })
                 })
-                .collect::<Result<Vec<DeviceAttribute>, Box<dyn Error>>>()?
+                .collect::<Result<Vec<DeviceAttribute>, Box<dyn Error>>>()?,
         })
     }
 
-    fn set(&mut self, master_id: DeviceId, attribute_id: AttributeId, value: &str) -> Result<(), Box<dyn Error>> {
-        (self.runner)(format!("aprontest -u -m {} -t {} -v {}", master_id, attribute_id, value))?;
+    fn set(
+        &mut self,
+        master_id: DeviceId,
+        attribute_id: AttributeId,
+        value: &str,
+    ) -> Result<(), Box<dyn Error>> {
+        (self.runner)(format!(
+            "aprontest -u -m {} -t {} -v {}",
+            master_id, attribute_id, value
+        ))?;
         Ok(())
     }
 }
@@ -176,10 +216,22 @@ GROUP ID |             NAME |            RADIO |
     #[test]
     fn list() {
         let controller = AprontestController {
-            runner: |_| Ok(TEST_LIST_STRING.to_string())
+            runner: |_| Ok(TEST_LIST_STRING.to_string()),
         };
 
-        assert_eq!(vec![ShortDevice{ id: 2, name: "Bedroom Fan".to_string() }, ShortDevice{ id: 4, name: "Bedroom Lights".to_string() }], controller.list().unwrap())
+        assert_eq!(
+            vec![
+                ShortDevice {
+                    id: 2,
+                    name: "Bedroom Fan".to_string()
+                },
+                ShortDevice {
+                    id: 4,
+                    name: "Bedroom Lights".to_string()
+                }
+            ],
+            controller.list().unwrap()
+        )
     }
 
     const TEST_DESCRIBE_STRING: &str = r###"
@@ -202,48 +254,57 @@ Bedroom Fan
             runner: |_| Ok(TEST_DESCRIBE_STRING.to_string()),
         };
 
-        assert_eq!(LongDevice {
-            gang_id: Some(0x03),
-            generic_device_type: Some(0x11),
-            specific_device_type: Some(0x08),
-            manufacturer_id: Some(0x63),
-            product_type: Some(0x4944),
-            product_number: Some(0x3131),
-            id: 2,
-            status: "ONLINE".to_string(),
-            name: "Bedroom Fan".to_string(),
-            attributes: vec![DeviceAttribute { id: 1,
-                description: "GenericValue".to_string(),
-                attribute_type: "UINT8".to_string(),
-                supports_write: true,
-                supports_read: true,
-                current_value: Some("0".to_string()),
-                setting_value: Some("0".to_string())
+        assert_eq!(
+            LongDevice {
+                gang_id: Some(0x03),
+                generic_device_type: Some(0x11),
+                specific_device_type: Some(0x08),
+                manufacturer_id: Some(0x63),
+                product_type: Some(0x4944),
+                product_number: Some(0x3131),
+                id: 2,
+                status: "ONLINE".to_string(),
+                name: "Bedroom Fan".to_string(),
+                attributes: vec![
+                    DeviceAttribute {
+                        id: 1,
+                        description: "GenericValue".to_string(),
+                        attribute_type: "UINT8".to_string(),
+                        supports_write: true,
+                        supports_read: true,
+                        current_value: Some("0".to_string()),
+                        setting_value: Some("0".to_string())
+                    },
+                    DeviceAttribute {
+                        id: 3,
+                        description: "Level".to_string(),
+                        attribute_type: "UINT8".to_string(),
+                        supports_write: true,
+                        supports_read: true,
+                        current_value: Some("0".to_string()),
+                        setting_value: Some("0".to_string())
+                    },
+                    DeviceAttribute {
+                        id: 4,
+                        description: "Up_Down".to_string(),
+                        attribute_type: "BOOL".to_string(),
+                        supports_write: true,
+                        supports_read: false,
+                        current_value: None,
+                        setting_value: None
+                    },
+                    DeviceAttribute {
+                        id: 5,
+                        description: "StopMovement".to_string(),
+                        attribute_type: "BOOL".to_string(),
+                        supports_write: true,
+                        supports_read: false,
+                        current_value: None,
+                        setting_value: None
+                    }
+                ]
             },
-                             DeviceAttribute { id: 3,
-                                 description: "Level".to_string(),
-                                 attribute_type: "UINT8".to_string(),
-                                 supports_write: true,
-                                 supports_read: true,
-                                 current_value: Some("0".to_string()),
-                                 setting_value: Some("0".to_string())
-                             },
-                             DeviceAttribute { id: 4,
-                                 description: "Up_Down".to_string(),
-                                 attribute_type: "BOOL".to_string(),
-                                 supports_write: true,
-                                 supports_read: false,
-                                 current_value: None,
-                                 setting_value: None
-                             },
-                             DeviceAttribute { id: 5,
-                                 description: "StopMovement".to_string(),
-                                 attribute_type: "BOOL".to_string(),
-                                 supports_write: true,
-                                 supports_read: false,
-                                 current_value: None,
-                                 setting_value: None
-                             }]
-        }, controller.describe(2).unwrap())
+            controller.describe(2).unwrap()
+        )
     }
 }
