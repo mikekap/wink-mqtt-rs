@@ -8,18 +8,13 @@ use std::error::Error;
 use std::fs;
 use std::io::{BufReader, Read};
 
-use clap::{App, Arg, ArgMatches, crate_version};
-use rumqttc::{Client, MqttOptions};
-use rustls;
-use rustls_native_certs;
+use clap::{crate_version, App, Arg, ArgMatches};
+use rumqttc::MqttOptions;
 use simple_error::bail;
-use slog::{Drain, info, LevelFilter, o, trace, warn};
-use slog_scope::{GlobalLoggerGuard};
+use slog::{info, o, trace, Drain, LevelFilter};
+use slog_scope::GlobalLoggerGuard;
 use slog_term;
-use tokio::{
-    self,
-    time::{Duration, timeout},
-};
+use tokio::{self, time::Duration};
 use url::Url;
 
 mod controller;
@@ -66,7 +61,10 @@ fn init_mqtt_client(a: &ArgMatches) -> Result<MqttOptions, Box<dyn Error>> {
 
     let hash_query: HashMap<_, _> = parsed.query_pairs().into_owned().collect();
 
-    let client_id = hash_query.get("client_id").map(|x| x.as_str()).unwrap_or("wink-mqtt-rs");
+    let client_id = hash_query
+        .get("client_id")
+        .map(|x| x.as_str())
+        .unwrap_or("wink-mqtt-rs");
     if client_id.starts_with(" ") {
         bail!("Invalid client id: {}", client_id)
     }
@@ -82,7 +80,7 @@ fn init_mqtt_client(a: &ArgMatches) -> Result<MqttOptions, Box<dyn Error>> {
         if let Some(cert) = hash_query.get("tls_root_cert") {
             let mut pem = BufReader::new(fs::File::open(cert)?);
             let mut data = Vec::new();
-            pem.read_to_end(&mut data);
+            pem.read_to_end(&mut data)?;
             options.set_ca(data);
             ()
         } else {
@@ -124,9 +122,15 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
 
     let _guard = init_logger(&matches);
 
-    let mut options = init_mqtt_client(&matches)?;
-    let mut controller = controller::AprontestController::new();
-    let mut syncer = syncer::DeviceSyncer::new(options, matches.value_of("topic-prefix").unwrap(), matches.value_of("discovery-prefix").unwrap(), controller).await;
+    let options = init_mqtt_client(&matches)?;
+    let controller = controller::AprontestController::new();
+    let _ = syncer::DeviceSyncer::new(
+        options,
+        matches.value_of("topic-prefix").unwrap(),
+        matches.value_of("discovery-prefix").unwrap(),
+        controller,
+    )
+    .await;
     loop {
         tokio::time::delay_for(Duration::from_secs(0xffffffff)).await;
     }

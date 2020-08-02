@@ -6,8 +6,6 @@ use std::str::FromStr;
 use regex::Regex;
 use simple_error::bail;
 use subprocess;
-use std::process::Stdio;
-use std::future::Future;
 
 pub type AttributeId = u32;
 pub type DeviceId = u32;
@@ -46,7 +44,7 @@ pub struct LongDevice {
     pub attributes: Vec<DeviceAttribute>,
 }
 
-pub trait DeviceController : Send {
+pub trait DeviceController: Send {
     fn list(&self) -> Result<Vec<ShortDevice>, Box<dyn Error>>;
     fn describe(&self, master_id: DeviceId) -> Result<LongDevice, Box<dyn Error>>;
     fn set(
@@ -63,14 +61,14 @@ pub struct AprontestController {
 
 impl AprontestController {
     pub fn new() -> AprontestController {
-        AprontestController{
+        AprontestController {
             runner: |cmd| {
                 let result = subprocess::Exec::cmd(cmd[0]).args(&cmd[1..]).capture()?;
                 if !result.success() {
                     bail!("Calling aprontest failed. Something went horribly wrong.\nCommand: {}\nStderr: {}", cmd.join(" "), result.stderr_str())
                 };
                 Ok(result.stdout_str())
-            }
+            },
         }
     }
 }
@@ -205,10 +203,16 @@ impl DeviceController for AprontestController {
         attribute_id: AttributeId,
         value: &str,
     ) -> Result<(), Box<dyn Error>> {
-        (self.runner)(
-            &["aprontest", "-u", "-m", &format!("{}", master_id),
-                "-t", &format!("{}", attribute_id),
-                "-v", &format!("{}", value)])?;
+        (self.runner)(&[
+            "aprontest",
+            "-u",
+            "-m",
+            &format!("{}", master_id),
+            "-t",
+            &format!("{}", attribute_id),
+            "-v",
+            &format!("{}", value),
+        ])?;
         Ok(())
     }
 }
