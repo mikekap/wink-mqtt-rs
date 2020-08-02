@@ -6,6 +6,7 @@ use std::str::FromStr;
 use regex::Regex;
 use simple_error::bail;
 use subprocess;
+use std::collections::HashMap;
 
 pub type AttributeId = u32;
 pub type DeviceId = u32;
@@ -213,6 +214,91 @@ impl DeviceController for AprontestController {
             "-v",
             &format!("{}", value),
         ])?;
+        Ok(())
+    }
+}
+
+pub struct FakeController {
+    attr_values : HashMap<(DeviceId, AttributeId), String>
+}
+
+impl FakeController {
+    pub fn new() -> FakeController {
+        FakeController {
+            attr_values: HashMap::new(),
+        }
+    }
+}
+
+impl DeviceController for FakeController {
+    fn list(&self) -> Result<Vec<ShortDevice>, Box<dyn Error>> {
+        Ok(vec![ShortDevice {
+                    id: 2,
+                    name: "Bedroom Fan".to_string()
+                }])
+    }
+
+    fn describe(&self, master_id: u32) -> Result<LongDevice, Box<dyn Error>> {
+        match master_id {
+            2 => Ok(LongDevice {
+                    gang_id: Some(0x03),
+                    generic_device_type: Some(0x11),
+                    specific_device_type: Some(0x08),
+                    manufacturer_id: Some(0x63),
+                    product_type: Some(0x4944),
+                    product_number: Some(0x3131),
+                    id: 2,
+                    status: "ONLINE".to_string(),
+                    name: "Bedroom Fan".to_string(),
+                    attributes: vec![
+                        DeviceAttribute {
+                            id: 1,
+                            description: "GenericValue".to_string(),
+                            attribute_type: "UINT8".to_string(),
+                            supports_write: true,
+                            supports_read: true,
+                            current_value: Some(self.attr_values.get(&(master_id, 1 as AttributeId)).map(|x| x.as_str()).unwrap_or("0").to_string()),
+                            setting_value: Some(self.attr_values.get(&(master_id, 1 as AttributeId)).map(|x| x.as_str()).unwrap_or("0").to_string()),
+                        },
+                        DeviceAttribute {
+                            id: 3,
+                            description: "Level".to_string(),
+                            attribute_type: "UINT8".to_string(),
+                            supports_write: true,
+                            supports_read: true,
+                            current_value: Some(self.attr_values.get(&(master_id, 3 as AttributeId)).map(|x| x.as_str()).unwrap_or("0").to_string()),
+                            setting_value: Some(self.attr_values.get(&(master_id, 3 as AttributeId)).map(|x| x.as_str()).unwrap_or("0").to_string()),
+                        },
+                        DeviceAttribute {
+                            id: 4,
+                            description: "Up_Down".to_string(),
+                            attribute_type: "BOOL".to_string(),
+                            supports_write: true,
+                            supports_read: false,
+                            current_value: None,
+                            setting_value: None
+                        },
+                        DeviceAttribute {
+                            id: 5,
+                            description: "StopMovement".to_string(),
+                            attribute_type: "BOOL".to_string(),
+                            supports_write: true,
+                            supports_read: false,
+                            current_value: None,
+                            setting_value: None
+                        }
+                    ]
+                }),
+
+            _ => bail!("Device id {} not found", master_id)
+        }
+    }
+
+    fn set(&mut self, master_id: u32, attribute_id: u32, value: &str) -> Result<(), Box<dyn Error>> {
+        if master_id != 2 || attribute_id < 1 || attribute_id > 5 {
+            bail!("Invalid inputs: {}/{}", master_id, attribute_id)
+        }
+        self.attr_values.insert((master_id, attribute_id), value.to_string());
         Ok(())
     }
 }

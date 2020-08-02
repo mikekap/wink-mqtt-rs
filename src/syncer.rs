@@ -3,7 +3,8 @@ use async_channel::Sender;
 use rumqttc::{EventLoop, Incoming, MqttOptions, Publish, Request, Subscribe};
 use serde_json::value::Value::{Bool, Number, Object};
 use simple_error::{bail, SimpleError};
-use slog::{error, info, warn};
+use slog::{error, info, warn, trace};
+use slog_scope;
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
@@ -23,11 +24,13 @@ where
     T: DeviceController,
 {
     pub async fn new(
-        options: MqttOptions,
+        mut options: MqttOptions,
         topic_prefix: &str,
         discovery_prefix: &str,
         controller: T,
     ) -> Arc<DeviceSyncer<T>> {
+        info!(slog_scope::logger(), "opening_client"; "host" => options.broker_address().0, "port" => options.broker_address().1);
+        options.set_clean_session(true);
         let ev = EventLoop::new(options, 100).await;
         let syncer = DeviceSyncer {
             topic_prefix: topic_prefix.to_string(),
@@ -37,13 +40,14 @@ where
         };
         let ptr = Arc::new(syncer);
         let ptr_clone = ptr.clone();
-        tokio::task::spawn(async move { Self::run(ptr, ev) });
+        trace!(slog_scope::logger(), "start_thread");
+        tokio::task::spawn(async move { Self::run(ptr, ev).await });
         ptr_clone
     }
 
     async fn do_subscribe(&self) -> Result<(), Box<dyn Error>> {
         let subscribe = Subscribe::new(
-            format!("{}/+/set", &self.topic_prefix),
+            format!("{}+/set", &self.topic_prefix),
             rumqttc::QoS::AtLeastOnce,
         );
 
@@ -55,13 +59,12 @@ where
         if !r.is_ok() {
             warn!(slog_scope::logger(), "async_failure"; "type" => type_, "error" => format!("{}", r.err().unwrap()));
         }
-        ();
     }
 
     async fn process_one(this: Arc<Self>, message: Publish) -> Result<(), Box<dyn Error>> {
         if message.topic.starts_with(this.topic_prefix.as_str()) {
-            tokio::task::spawn_blocking(async move || {
-                Self::report_async_result("set", this.process_one_control_message(message));
+            tokio::task::spawn_blocking(move || {
+                Self::report_async_result("set", this.process_one_control_message(message))
             });
             Ok(())
         } else {
@@ -72,16 +75,17 @@ where
     fn process_one_control_message(&self, message: Publish) -> Result<(), Box<dyn Error>> {
         let device_id = message
             .topic
-            .strip_prefix(self.topic_prefix.as_str())
-            .and_then(|v| v.strip_prefix("/"))
+            .strip_prefix(&self.topic_prefix)
             .and_then(|v| v.strip_suffix("/set"))
-            .ok_or(SimpleError::new("bad topic"))?
+            .ok_or(SimpleError::new(format!("bad topic: {}", message.topic)))?
             .parse::<u64>()? as crate::controller::DeviceId;
 
-        let value = match serde_json::from_slice(&message.payload)? {
+        let input = std::str::from_utf8(&message.payload)?;
+        trace!(slog_scope::logger(), "control_message"; "device_id" => device_id, "payload" => &input);
+
+        let value = match serde_json::from_str(input)? {
             Object(map) => map,
             _ => {
-                let input = std::str::from_utf8(&message.payload).unwrap();
                 bail!("Input to set not a map: {}", input)
             }
         };
@@ -140,7 +144,10 @@ where
             return Ok(());
         }
 
-        return match message.unwrap() {
+        let message = message.unwrap();
+        trace!(slog_scope::logger(), "mqtt_message"; "message" => format!("{:?}", &message));
+
+        return match message {
             Incoming::Connected => {
                 this.do_subscribe().await?;
                 Ok(())

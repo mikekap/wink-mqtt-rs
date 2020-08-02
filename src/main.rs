@@ -16,9 +16,11 @@ use slog_scope::GlobalLoggerGuard;
 use slog_term;
 use tokio::{self, time::Duration};
 use url::Url;
+use log;
 
 mod controller;
 mod syncer;
+mod converter;
 
 fn init_logger(args: &ArgMatches) -> GlobalLoggerGuard {
     let min_log_level = match args.occurrences_of("verbose") {
@@ -27,14 +29,15 @@ fn init_logger(args: &ArgMatches) -> GlobalLoggerGuard {
         2 | _ => slog::Level::Trace,
     };
     let decorator = slog_term::PlainSyncDecorator::new(std::io::stderr());
-    let drain = slog_term::FullFormat::new(decorator).build().fuse();
-    let drain = LevelFilter::new(drain, min_log_level).fuse();
+    let drain = slog_term::FullFormat::new(decorator).build().filter_level(min_log_level).fuse();
     let logger = slog::Logger::root(drain, o!());
     info!(logger, "init_logger"; "min_log_level" => format!("{:?}", min_log_level));
 
+    let scope_guard = slog_scope::set_global_logger(logger);
+
     slog_stdlog::init().unwrap();
 
-    slog_scope::set_global_logger(logger)
+    scope_guard
 }
 
 fn init_mqtt_client(a: &ArgMatches) -> Result<MqttOptions, Box<dyn Error>> {
@@ -88,7 +91,6 @@ fn init_mqtt_client(a: &ArgMatches) -> Result<MqttOptions, Box<dyn Error>> {
         }
     }
 
-    info!(slog_scope::logger(), "opening_client"; "host" => options.broker_address().0, "port" => options.broker_address().1);
     Ok(options)
 }
 
@@ -101,9 +103,12 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
         .arg(Arg::with_name("verbose")
             .short('v')
             .multiple(true)
+            .takes_value(false)
             .about("verbosity level"))
         .arg(Arg::with_name("mqtt-uri")
             .short('s')
+            .required(true)
+            .takes_value(true)
             .about("mqtt server to connect to. Should be of the form mqtt[s]://[username:password@]host:port/[?connection_options]"))
         .arg(Arg::with_name("topic-prefix")
             .short('t')
@@ -112,7 +117,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
         .arg(Arg::with_name("discovery-prefix")
             .short('d')
             .about("Prefix (applied independently of --topic-prefix) to broadcast mqtt discovery information (see https://www.home-assistant.io/docs/mqtt/discovery/)")
-            .default_value(""))
+            .required(false))
         .arg(Arg::with_name("discovery-listen-topic")
             .required(false)
             .long("--discovery-listen-topic")
@@ -123,15 +128,18 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     let _guard = init_logger(&matches);
 
     let options = init_mqtt_client(&matches)?;
+    #[cfg(target_arch = "arm")]
     let controller = controller::AprontestController::new();
+    #[cfg(not (target_arch = "arm"))]
+    let controller = controller::FakeController::new();
     let _ = syncer::DeviceSyncer::new(
         options,
         matches.value_of("topic-prefix").unwrap(),
-        matches.value_of("discovery-prefix").unwrap(),
+        matches.value_of("discovery-prefix").unwrap_or(""),
         controller,
     )
     .await;
     loop {
-        tokio::time::delay_for(Duration::from_secs(0xffffffff)).await;
+        tokio::time::delay_for(Duration::from_secs(0xfffff)).await;
     }
 }

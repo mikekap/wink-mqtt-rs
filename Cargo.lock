@@ -1240,6 +1240,7 @@ dependencies = [
  "async-channel",
  "clap",
  "lazy_static",
+ "log",
  "regex",
  "rumqttc",
  "serde_json",
