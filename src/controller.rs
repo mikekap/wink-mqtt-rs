@@ -6,6 +6,8 @@ use std::str::FromStr;
 use regex::Regex;
 use simple_error::bail;
 use subprocess;
+use std::process::Stdio;
+use std::future::Future;
 
 pub type AttributeId = u32;
 pub type DeviceId = u32;
@@ -44,7 +46,7 @@ pub struct LongDevice {
     pub attributes: Vec<DeviceAttribute>,
 }
 
-pub trait DeviceController {
+pub trait DeviceController : Send {
     fn list(&self) -> Result<Vec<ShortDevice>, Box<dyn Error>>;
     fn describe(&self, master_id: DeviceId) -> Result<LongDevice, Box<dyn Error>>;
     fn set(
@@ -56,17 +58,16 @@ pub trait DeviceController {
 }
 
 pub struct AprontestController {
-    runner: fn(command: String) -> Result<String, Box<dyn Error>>,
+    runner: fn(command: &[&str]) -> Result<String, Box<dyn Error>>,
 }
 
 impl AprontestController {
     pub fn new() -> AprontestController {
         AprontestController{
             runner: |cmd| {
-                let cmd_saved = cmd.clone();
-                let result = subprocess::Exec::shell(cmd).capture()?;
+                let result = subprocess::Exec::cmd(cmd[0]).args(&cmd[1..]).capture()?;
                 if !result.success() {
-                    bail!("Calling aprontest failed. Something went horribly wrong.\nCommand: {}\nStderr: {}", cmd_saved, result.stderr_str())
+                    bail!("Calling aprontest failed. Something went horribly wrong.\nCommand: {}\nStderr: {}", cmd.join(" "), result.stderr_str())
                 };
                 Ok(result.stdout_str())
             }
@@ -118,7 +119,7 @@ impl Numberish for str {
 
 impl DeviceController for AprontestController {
     fn list(&self) -> Result<Vec<ShortDevice>, Box<dyn Error>> {
-        let stdout = (self.runner)("aprontest -l".to_string())?;
+        let stdout = (self.runner)(&["aprontest", "-l"])?;
         let devices = match LIST_REGEX.captures(&stdout) {
             Some(v) => v,
             _ => bail!("Output doesn't match regex:\n{}", stdout),
@@ -137,7 +138,7 @@ impl DeviceController for AprontestController {
     }
 
     fn describe(&self, master_id: DeviceId) -> Result<LongDevice, Box<dyn Error>> {
-        let stdout = (self.runner)(format!("aprontest -l -m {}", master_id))?;
+        let stdout = (self.runner)(&["aprontest", "-l", "-m", &format!("{}", master_id)])?;
 
         let parsed = match LONG_DEVICE_REGEX.captures(&stdout) {
             Some(v) => v,
@@ -204,11 +205,10 @@ impl DeviceController for AprontestController {
         attribute_id: AttributeId,
         value: &str,
     ) -> Result<(), Box<dyn Error>> {
-        // Yes - this is a security hole. Enjoy!
-        (self.runner)(format!(
-            "aprontest -u -m {} -t {} -v {}",
-            master_id, attribute_id, value
-        ))?;
+        (self.runner)(
+            &["aprontest", "-u", "-m", &format!("{}", master_id),
+                "-t", &format!("{}", attribute_id),
+                "-v", &format!("{}", value)])?;
         Ok(())
     }
 }

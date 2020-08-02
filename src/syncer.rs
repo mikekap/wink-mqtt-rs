@@ -1,54 +1,85 @@
-use mqtt_async_client::client::{Client, SubscribeResult, Subscribe, SubscribeTopic, QoS};
-use crate::controller::DeviceController;
+use rumqttc::{Client, MqttOptions, EventLoop, Subscribe, Publish, Request, Incoming};
+use crate::controller::{DeviceController, ShortDevice, DeviceId, LongDevice, AttributeId};
 use std::error::Error;
 use std::io::Read;
 use serde_json::value::Value::{Number, Bool, Object};
 use slog::{error, warn};
 use std::collections::HashMap;
 use simple_error::{bail, SimpleError};
+use std::sync::{Arc, Mutex, RwLock};
+use std::cell::RefCell;
 
-pub struct DeviceSyncer<'a> {
-    controller: &'a mut dyn DeviceController,
-    mqtt_client: &'a mut Client,
+pub struct DeviceSyncer<T> where T : DeviceController {
     topic_prefix: String,
+    discovery_prefix: String,
+    controller: Mutex<T>,
+    event_loop: tokio::sync::RwLock<EventLoop>,
 }
 
-impl<'a> DeviceSyncer<'a> {
-    pub fn new(controller: &'a mut dyn DeviceController, mqtt_client: &'a mut Client, topic_prefix: &str) -> DeviceSyncer<'a> {
-        return DeviceSyncer{
-            controller,
-            mqtt_client,
+impl<T: 'static> DeviceSyncer<T> where T : DeviceController {
+    pub async fn new(options: MqttOptions, topic_prefix: &str, discovery_prefix: &str, controller: T) -> Arc<DeviceSyncer<T>> {
+        let ev = EventLoop::new(options, 100).await;
+        let mut syncer = DeviceSyncer{
             topic_prefix: topic_prefix.to_string(),
+            discovery_prefix: discovery_prefix.to_string(),
+            event_loop: tokio::sync::RwLock::new(ev),
+            controller: Mutex::new(controller),
         };
+        let mut ptr = Arc::new(syncer);
+        let ptr_clone = ptr.clone();
+        tokio::task::spawn(async move {
+            Self::run(ptr)
+        });
+        ptr_clone
     }
 
-    async fn do_subscribe(&mut self) -> Result<(), Box<dyn Error>> {
-        Ok(self.mqtt_client.subscribe(
-            Subscribe::new(vec![SubscribeTopic {
-                topic_path: format!("{}/+/set", self.topic_prefix),
-                qos: QoS::AtLeastOnce
-            }])).await?.any_failures()?)
+    async fn do_subscribe(&self) -> Result<(), Box<dyn Error>> {
+        let subscribe = Subscribe::new(
+            format!("{}/+/set", &self.topic_prefix),
+            rumqttc::QoS::AtLeastOnce);
+
+        self.event_loop.read().await.handle().send(Request::Subscribe(subscribe)).await?;
+        Ok(())
     }
 
-    async fn loop_once(&mut self) -> Result<(), Box<dyn Error>> {
-        let result = self.mqtt_client.read_subscriptions().await?;
-        let device_id = result.topic()
-            .strip_prefix(&self.topic_prefix)
+    fn report_async_result<X>(type_: &str, r: Result<X, Box<dyn Error>>) {
+        if !r.is_ok() {
+            warn!(slog_scope::logger(), "async_failure"; "type" => type_, "error" => format!("{}", r.err().unwrap()));
+        }
+        ();
+    }
+
+    async fn process_one(mut this: Arc<Self>, message: Publish) -> Result<(), Box<dyn Error>> {
+        if message.topic.starts_with(this.topic_prefix.as_str()) {
+            tokio::task::spawn_blocking(async move || {
+                Self::report_async_result("set", this.process_one_control_message(message));
+            });
+            Ok(())
+        } else {
+            bail!("Unknown message topic: {}", message.topic)
+        }
+    }
+
+    fn process_one_control_message(&self, message: Publish) -> Result<(), Box<dyn Error>> {
+        let device_id = message.topic
+            .strip_prefix(self.topic_prefix.as_str())
             .and_then(|v| v.strip_prefix("/"))
             .and_then(|v| v.strip_suffix("/set"))
             .ok_or(SimpleError::new("bad topic"))?
             .parse::<u64>()?
             as crate::controller::DeviceId;
 
-        let value = match serde_json::from_slice(result.payload())? {
+        let value = match serde_json::from_slice(&message.payload)? {
             Object(map) => map,
             _ => {
-                let input = std::str::from_utf8(result.payload()).unwrap();
+                let input = std::str::from_utf8(&message.payload).unwrap();
                 bail!("Input to set not a map: {}", input)
             }
         };
 
-        let attribute_names = self.controller.describe(device_id)?
+        let mut controller = self.controller.lock().unwrap();
+
+        let attribute_names = controller.describe(device_id)?
             .attributes
             .into_iter()
             .map(|mut item| (item.description.to_string(), item))
@@ -78,29 +109,70 @@ impl<'a> DeviceSyncer<'a> {
                     continue
                 }
             };
-            self.controller.set(device_id, attribute_id, &value)?
+            controller.set(device_id, attribute_id, &value)?
         }
 
         Ok(())
     }
 
-    pub fn start(&mut self) -> () {
-        tokio::spawn(async move {
-            loop {
-                let result = self.do_subscribe().await;
-                if result.is_ok() {
-                    break
-                } else {
-                    warn!(slog_scope::logger(), "could_not_subscribe"; "err" => format!("{}", result.unwrap_err()))
-                }
-            }
+    async fn loop_once(mut this: Arc<Self>) -> Result<(), Box<dyn Error>> {
+        let (message, _) = this.event_loop.write().await.poll().await?;
 
-            loop {
-                let result = self.loop_once().await;
-                if !result.is_ok() {
-                    error!(slog_scope::logger(), "loop_error"; "err" => format!("{}", result.unwrap_err()))
-                }
+        if message.is_none() {
+            return Ok(())
+        }
+
+        return match message.unwrap() {
+            Incoming::Connected => {
+                this.do_subscribe().await?;
+                Ok(())
+            },
+            Incoming::Publish(message) => {
+                Self::process_one(this, message).await?;
+                Ok(())
             }
-        });
+            Incoming::PubAck(_) => {
+                Ok(())
+            }
+            Incoming::PubRec(_) => {
+                bail!("Unexpected pubrec");
+            }
+            Incoming::PubRel(_) => {
+                bail!("Unexpected pubrel");
+            }
+            Incoming::PubComp(_) => {
+                bail!("Unexpected pubcomp")
+            }
+            Incoming::Subscribe(_) => {
+                bail!("Unexpected subscribe")
+            }
+            Incoming::SubAck(_) => {
+                Ok(())
+            }
+            Incoming::Unsubscribe(_) => {
+                bail!("Unexpected unsubscribe!")
+            }
+            Incoming::UnsubAck(_) => {
+                bail!("Unexpected unsuback!")
+            }
+            Incoming::PingReq => {
+                Ok(())
+            }
+            Incoming::PingResp => {
+                Ok(())
+            }
+            Incoming::Disconnect => {
+                Ok(())
+            }
+        }
+    }
+
+    async fn run(mut this: Arc<Self>) -> () {
+        loop {
+            let result = Self::loop_once(this.clone()).await;
+            if !result.is_ok() {
+                warn!(slog_scope::logger(), "loop_encountered_error"; "err" => format!("{}", result.unwrap_err()))
+            }
+        }
     }
 }

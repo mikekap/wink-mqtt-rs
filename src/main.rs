@@ -6,12 +6,10 @@ extern crate lazy_static;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
-use std::io::BufReader;
+use std::io::{BufReader, Read};
 
 use clap::{App, Arg, ArgMatches, crate_version};
-use mqtt_async_client::client::{
-    Client, Publish, QoS, Subscribe, SubscribeTopic, Unsubscribe, UnsubscribeTopic,
-};
+use rumqttc::{Client, MqttOptions};
 use rustls;
 use rustls_native_certs;
 use simple_error::bail;
@@ -44,7 +42,7 @@ fn init_logger(args: &ArgMatches) -> GlobalLoggerGuard {
     slog_scope::set_global_logger(logger)
 }
 
-fn init_mqtt_client(a: &ArgMatches) -> Result<Client, Box<dyn Error>> {
+fn init_mqtt_client(a: &ArgMatches) -> Result<MqttOptions, Box<dyn Error>> {
     let mqtt_uri = a.value_of("mqtt-uri").unwrap();
     trace!(slog_scope::logger(), "parse_uri"; "uri" => mqtt_uri);
     let mqtt_uri = if !mqtt_uri.starts_with("mqtt://") && !mqtt_uri.starts_with("mqtts://") {
@@ -59,61 +57,41 @@ fn init_mqtt_client(a: &ArgMatches) -> Result<Client, Box<dyn Error>> {
         bail!("Invalid mqtt url: {}", mqtt_uri)
     }
 
-    let mut builder = Client::builder();
-
-    let builder = match parsed.host() {
-        Some(host) => builder.set_host(host.to_string()),
+    let host = match parsed.host() {
+        Some(host) => host.to_string(),
         None => bail!("No host in mqtt uri: {}", mqtt_uri),
     };
 
-    if let Some(port) = parsed.port() {
-        builder.set_port(port);
-    }
-
-    if parsed.username() != "" {
-        builder.set_username(Some(parsed.username().to_string()));
-    }
-    if let Some(v) = parsed.password() {
-        builder.set_password(Some(Vec::from(v)));
-    }
+    let port = parsed.port().unwrap_or(1883);
 
     let hash_query: HashMap<_, _> = parsed.query_pairs().into_owned().collect();
 
+    let client_id = hash_query.get("client_id").map(|x| x.as_str()).unwrap_or("wink-mqtt-rs");
+    if client_id.starts_with(" ") {
+        bail!("Invalid client id: {}", client_id)
+    }
+
+    let mut options = MqttOptions::new(client_id, host, port);
+
+    if parsed.username() != "" {
+        let password = parsed.password().unwrap_or("");
+        options.set_credentials(parsed.username(), password);
+    }
+
     if "mqtts" == parsed.scheme() {
-        let mut ssl_config = rustls::ClientConfig::new();
-        match hash_query.get("tls_root_cert") {
-            Some(v) => {
-                let mut pem = BufReader::new(fs::File::open(v)?);
-                match ssl_config.root_store.add_pem_file(&mut pem) {
-                    Ok(_) => {}
-                    Err(_) => bail!("Failed to load root cert"),
-                };
-            }
-            None => {
-                match rustls_native_certs::load_native_certs() {
-                    Ok(cert_store) => ssl_config.root_store = cert_store,
-                    Err((Some(partial_certs), err)) => {
-                        warn!(slog_scope::logger(), "native_cert_failure"; "err" => format!("{}", err));
-                        ssl_config.root_store = partial_certs
-                    },
-                    Err((_, err)) => {
-                        bail!("Failed to load any SSL certificates. Check that ca-certificates exists. Error: {}", err)
-                    }
-                };
-            }
+        if let Some(cert) = hash_query.get("tls_root_cert") {
+            let mut pem = BufReader::new(fs::File::open(cert)?);
+            let mut data = Vec::new();
+            pem.read_to_end(&mut data);
+            options.set_ca(data);
+            ()
+        } else {
+            bail!("Missing root cert for mqtts")
         }
-        builder.set_tls_client_config(ssl_config);
     }
 
-    if let Some(v) = hash_query.get("client_id") {
-        builder.set_client_id(Some(v.to_string()));
-    }
-
-    info!(slog_scope::logger(), "opening_client"; "host" => parsed.host().unwrap().to_string(), "port" => parsed.port());
-    match builder.build() {
-        Ok(b) => Ok(b),
-        Err(e) => Err(e.into()),
-    }
+    info!(slog_scope::logger(), "opening_client"; "host" => options.broker_address().0, "port" => options.broker_address().1);
+    Ok(options)
 }
 
 #[tokio::main]
@@ -146,10 +124,10 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
 
     let _guard = init_logger(&matches);
 
-    let mut client = init_mqtt_client(&matches)?;
+    let mut options = init_mqtt_client(&matches)?;
     let mut controller = controller::AprontestController::new();
-    let mut syncer = syncer::DeviceSyncer::new(&mut controller, &mut client, matches.value_of("topic-prefix").unwrap());
-    syncer.start();
-
-    Ok(())
+    let mut syncer = syncer::DeviceSyncer::new(options, matches.value_of("topic-prefix").unwrap(), matches.value_of("discovery-prefix").unwrap(), controller).await;
+    loop {
+        tokio::time::delay_for(Duration::from_secs(0xffffffff)).await;
+    }
 }
