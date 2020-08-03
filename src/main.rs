@@ -11,12 +11,11 @@ use std::io::{BufReader, Read};
 use clap::{crate_version, App, Arg, ArgMatches};
 use rumqttc::MqttOptions;
 use simple_error::bail;
-use slog::{info, o, trace, Drain, LevelFilter};
+use slog::{info, o, trace, Drain};
 use slog_scope::GlobalLoggerGuard;
 use slog_term;
 use tokio::{self, time::Duration};
 use url::Url;
-use log;
 
 mod controller;
 mod syncer;
@@ -116,10 +115,12 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             .default_value("home/wink/"))
         .arg(Arg::with_name("discovery-prefix")
             .short('d')
+            .takes_value(true)
             .about("Prefix (applied independently of --topic-prefix) to broadcast mqtt discovery information (see https://www.home-assistant.io/docs/mqtt/discovery/)")
             .required(false))
         .arg(Arg::with_name("discovery-listen-topic")
             .required(false)
+            .takes_value(true)
             .long("--discovery-listen-topic")
             .about("Topic to listen to in order to (re)broadcast discovery information. Only applies if --discovery-prefix is set.")
             .default_value("homeassistant/status"))
@@ -135,7 +136,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     let _ = syncer::DeviceSyncer::new(
         options,
         matches.value_of("topic-prefix").unwrap(),
-        matches.value_of("discovery-prefix").unwrap_or(""),
+        matches.value_of("discovery-prefix"),
         controller,
     )
     .await;

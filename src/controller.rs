@@ -7,7 +7,6 @@ use regex::Regex;
 use simple_error::bail;
 use subprocess;
 use std::collections::HashMap;
-use crate::controller::AttributeType::UInt8;
 
 pub type AttributeId = u32;
 pub type DeviceId = u32;
@@ -57,6 +56,12 @@ pub struct LongDevice {
     pub status: DeviceStatus,
     pub name: String,
     pub attributes: Vec<DeviceAttribute>,
+}
+
+impl LongDevice {
+    pub fn attribute(&self, s: &str) -> Option<&DeviceAttribute> {
+        self.attributes.iter().find(|x| x.description == s)
+    }
 }
 
 pub trait DeviceController: Send {
@@ -234,7 +239,7 @@ impl DeviceController for AprontestController {
         let value = match value {
             AttributeValue::NoValue => bail!("Invalid attribute value: none"),
             AttributeValue::UInt8(v) => format!("{}", v),
-            AttributeValue::Bool(v) => if (*v) { "TRUE" } else { "FALSE" }.to_string(),
+            AttributeValue::Bool(v) => if *v { "TRUE" } else { "FALSE" }.to_string(),
         };
         (self.runner)(&[
             "aprontest",

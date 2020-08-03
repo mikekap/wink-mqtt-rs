@@ -1,9 +1,10 @@
-use crate::controller::{DeviceController, DeviceId, AttributeValue};
+use crate::controller::{DeviceController, DeviceId, AttributeValue, ShortDevice, LongDevice, AttributeId, AttributeType};
+use crate::converter::device_to_discovery_payload;
 use async_channel::{Sender, bounded, Receiver};
 use rumqttc::{EventLoop, Incoming, MqttOptions, Publish, Request, Subscribe};
 use serde_json::value::Value::{Bool, Number, Object};
 use simple_error::{bail, SimpleError};
-use slog::{error, info, warn, trace};
+use slog::{error, info, warn, trace, debug};
 use slog_scope;
 use std::collections::HashMap;
 use std::error::Error;
@@ -16,7 +17,7 @@ where
     T: DeviceController,
 {
     topic_prefix: String,
-    discovery_prefix: String,
+    discovery_prefix: Option<String>,
     controller: Mutex<T>,
     sender: Sender<Request>,
     repoll: Sender<DeviceId>,
@@ -29,7 +30,7 @@ where
     pub async fn new(
         mut options: MqttOptions,
         topic_prefix: &str,
-        discovery_prefix: &str,
+        discovery_prefix: Option<&str>,
         controller: T,
     ) -> Arc<DeviceSyncer<T>> {
         info!(slog_scope::logger(), "opening_client"; "host" => options.broker_address().0, "port" => options.broker_address().1);
@@ -38,31 +39,38 @@ where
         let (repoll_sender, repoll_rx) = bounded(10);
         let syncer = DeviceSyncer {
             topic_prefix: topic_prefix.to_string(),
-            discovery_prefix: discovery_prefix.to_string(),
+            discovery_prefix: discovery_prefix.map(|x| x.to_string()),
             controller: Mutex::new(controller),
             sender: ev.handle(),
             repoll: repoll_sender,
         };
         let ptr = Arc::new(syncer);
         let ptr_2 = ptr.clone();
+        let ptr_3 = ptr.clone();
         let ptr_clone = ptr.clone();
         trace!(slog_scope::logger(), "start_thread");
         tokio::task::spawn(async move { Self::run_mqtt(ptr, ev).await });
         tokio::task::spawn(async move { Self::run_poller(ptr_2, repoll_rx).await });
+        if ptr_clone.discovery_prefix.is_some() {
+            tokio::task::spawn(async move { Self::broadcast_discovery(ptr_3).await });
+        }
         ptr_clone
     }
 
     async fn do_subscribe(&self) -> Result<(), Box<dyn Error>> {
-        let subscribe = Subscribe::new(
+        self.sender.send(Request::Subscribe(Subscribe::new(
             format!("{}+/set", &self.topic_prefix),
             rumqttc::QoS::AtLeastOnce,
-        );
+        ))).await?;
 
-        self.sender.send(Request::Subscribe(subscribe)).await?;
+        self.sender.send(Request::Subscribe(Subscribe::new(
+            format!("{}+/+/set", &self.topic_prefix),
+            rumqttc::QoS::AtLeastOnce,
+        ))).await?;
         Ok(())
     }
 
-    fn report_async_result<X>(type_: &str, r: Result<X, Box<dyn Error>>) {
+    fn report_async_result<X, E : std::fmt::Display>(type_: &str, r: Result<X, E>) {
         if !r.is_ok() {
             warn!(slog_scope::logger(), "async_failure"; "type" => type_, "error" => format!("{}", r.err().unwrap()));
         }
@@ -80,15 +88,58 @@ where
     }
 
     fn process_one_control_message(&self, message: Publish) -> Result<(), Box<dyn Error>> {
-        let device_id = message
+        let path_components = message
             .topic
             .strip_prefix(&self.topic_prefix)
             .and_then(|v| v.strip_suffix("/set"))
             .ok_or(SimpleError::new(format!("bad topic: {}", message.topic)))?
-            .parse::<u64>()? as crate::controller::DeviceId;
+            .split("/")
+            .collect::<Vec<_>>();
 
-        let input = std::str::from_utf8(&message.payload)?;
-        trace!(slog_scope::logger(), "control_message"; "device_id" => device_id, "payload" => &input);
+        let device_id = path_components.first()
+            .ok_or(SimpleError::new(format!("Bad topic: {}", message.topic)))?
+            .parse::<u64>()? as crate::controller::DeviceId;
+        if let [_, rest] = path_components[..] {
+            let attribute_id = rest.parse::<u64>()? as AttributeId;
+            self.set_device_attribute_by_id(device_id, attribute_id, &message.payload)?;
+        } else {
+            self.set_device_attributes_json(device_id, &message.payload)?;
+        };
+
+        Ok(())
+    }
+
+    fn set_device_attribute_by_id(&self, device_id: DeviceId, attribute_id: AttributeId, payload: &[u8]) -> Result<(), Box<dyn Error>> {
+        let (device_name, attribute) = {
+            let info = self.controller.lock().unwrap().describe(device_id)?;
+            (info.name, info.attributes
+                .into_iter()
+                .find(|x| x.id == attribute_id)
+                .ok_or(SimpleError::new(format!("Couldn't find attribute with id {} on device {}", attribute_id, device_id)))?)
+        };
+        if !attribute.supports_write {
+            bail!("Attribute {} does not support write", attribute.description);
+        };
+
+        let payload_str = std::str::from_utf8(payload)?.trim();
+        let value = match attribute.attribute_type {
+            AttributeType::UInt8 => AttributeValue::UInt8(payload_str.parse::<u8>()?),
+            AttributeType::Bool => AttributeValue::Bool(match payload_str.to_ascii_lowercase().as_str() {
+                "true" | "1" | "yes" => true,
+                "false" | "0" | "no" => false,
+                _ => bail!("Bad boolean value: {}", payload_str),
+            })
+        };
+
+        self.controller.lock().unwrap().set(device_id, attribute_id, &value)?;
+        info!(slog_scope::logger(), "set"; "device_id" => device_id, "device" => &device_name, "attribute" => &attribute.description, "value" => format!("{:?}", value));
+
+        Ok(())
+    }
+
+    fn set_device_attributes_json(&self, device_id: DeviceId, payload: &[u8]) -> Result<(), Box<dyn Error>> {
+        let input = std::str::from_utf8(&payload)?;
+        debug!(slog_scope::logger(), "json_message"; "device_id" => device_id, "payload" => &input);
 
         let value = match serde_json::from_str(input)? {
             Object(map) => map,
@@ -137,7 +188,7 @@ where
                     continue;
                 }
             };
-            info!(slog_scope::logger(), "set"; "device_id" => device_id, "device_name" => &device_name, "attribute_name" => k, "value" => format!("{:?}", value));
+            info!(slog_scope::logger(), "set"; "device_id" => device_id, "device" => &device_name, "attribute" => k, "value" => format!("{:?}", value));
             controller.set(device_id, attribute_id, &value)?
         }
 
@@ -260,5 +311,58 @@ where
                 }
             };
         }
+    }
+
+    async fn broadcast_device_discovery(this: Arc<Self>, id: DeviceId) -> Result<(), Box<dyn Error>> {
+        debug!(slog_scope::logger(), "broadcast_discovery"; "id" => id);
+
+        let that = this.clone();
+        let device = tokio::task::spawn_blocking(move || -> Result<LongDevice, SimpleError> {
+            match that.controller.lock().unwrap().describe(id) {
+                Ok(v) => Ok(v),
+                Err(v) => bail!("{}", v),
+            }
+        }).await??;
+
+        match device_to_discovery_payload(&this.topic_prefix, &device) {
+            Some(v) => {
+                let topic = format!("{}{}/wink/{}/config", this.discovery_prefix.as_ref().unwrap(), v.component, device.id);
+                let config = v.discovery_info.to_string();
+                debug!(slog_scope::logger(), "broadcast_discovery_result"; "id" => id, "topic" => &topic, "config" => &config);
+                this.sender.send(Request::Publish(Publish::new(
+                    topic,
+                    rumqttc::QoS::AtLeastOnce,
+                    config,
+                ))).await?;
+                Ok(())
+            },
+            None => {
+                warn!(slog_scope::logger(), "unknown_device"; "device_id" => id, "device_info" => format!("{:?}", device));
+                Ok(())
+            }
+        }
+    }
+
+    async fn broadcast_discovery_(this: Arc<Self>) -> Result<(), Box<dyn Error>> {
+        let that = this.clone();
+        let devices = tokio::task::spawn_blocking(move || -> Result<Vec<ShortDevice>, SimpleError> {
+            match that.controller.lock().unwrap().list() {
+                Ok(v) => Ok(v),
+                Err(v) => bail!("{}", v),
+            }
+        }).await??;
+
+        let futures = devices
+            .into_iter()
+            .map(|d| Self::broadcast_device_discovery(this.clone(), d.id))
+            .collect::<Vec<_>>();
+        for f in futures {
+            f.await?;
+        };
+        Ok(())
+    }
+
+    async fn broadcast_discovery(this: Arc<Self>) -> () {
+        Self::report_async_result("broadcast_discovery", Self::broadcast_discovery_(this).await)
     }
 }
