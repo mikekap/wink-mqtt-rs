@@ -1,8 +1,8 @@
-use crate::controller::{DeviceController, DeviceId, AttributeValue, ShortDevice, LongDevice, AttributeId, AttributeType};
+use crate::controller::{DeviceController, DeviceId, AttributeValue, ShortDevice, LongDevice, AttributeId};
 use crate::converter::device_to_discovery_payload;
 use async_channel::{Sender, bounded, Receiver};
 use rumqttc::{EventLoop, Incoming, MqttOptions, Publish, Request, Subscribe};
-use serde_json::value::Value::{Bool, Number, Object};
+use serde_json::value::Value::{Object};
 use simple_error::{bail, SimpleError};
 use slog::{error, info, warn, trace, debug};
 use slog_scope;
@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use tokio::time::Duration;
-use std::convert::TryFrom;
 
 pub struct DeviceSyncer<T>
 where
@@ -121,15 +120,8 @@ where
             bail!("Attribute {} does not support write", attribute.description);
         };
 
-        let payload_str = std::str::from_utf8(payload)?.trim();
-        let value = match attribute.attribute_type {
-            AttributeType::UInt8 => AttributeValue::UInt8(payload_str.parse::<u8>()?),
-            AttributeType::Bool => AttributeValue::Bool(match payload_str.to_ascii_lowercase().as_str() {
-                "true" | "1" | "yes" => true,
-                "false" | "0" | "no" => false,
-                _ => bail!("Bad boolean value: {}", payload_str),
-            })
-        };
+        let payload_str = std::str::from_utf8(payload)?;
+        let value = attribute.attribute_type.parse(payload_str)?;
 
         self.controller.lock().unwrap().set(device_id, attribute_id, &value)?;
         info!(slog_scope::logger(), "set"; "device_id" => device_id, "device" => &device_name, "attribute" => &attribute.description, "value" => format!("{:?}", value));
@@ -162,7 +154,7 @@ where
         };
 
         for (k, v) in value.iter() {
-            let attribute_id = match attribute_names.get(k) {
+            let attribute = match attribute_names.get(k) {
                 Some(v) => {
                     if !v.supports_write {
                         error!(
@@ -171,7 +163,7 @@ where
                         );
                         continue;
                     }
-                    v.id
+                    v
                 }
                 _ => {
                     error!(slog_scope::logger(), "Bad attribute name: {}", k);
@@ -179,17 +171,16 @@ where
                 }
             };
 
-            let value = match v {
-                Number(n) => AttributeValue::UInt8(n.as_u64().and_then(|x| u8::try_from(x).ok()).unwrap_or(if n.as_i64().unwrap_or(0) < 0 { 0 } else { 255 })),
-                Bool(v) => AttributeValue::Bool(*v),
-                // serde_json::Value::String(s) => s.clone(),
-                v => {
-                    error!(slog_scope::logger(), "unknown_setting_for_key"; "key" => k, "value" => format!("{}", v));
+            let value = match attribute.attribute_type.parse_json(v) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!(slog_scope::logger(), "bad_setting_for_attribute"; "attribute" => &attribute.description, "value" => format!("{}", v), "error" => format!("{}", e));
                     continue;
                 }
             };
+
             info!(slog_scope::logger(), "set"; "device_id" => device_id, "device" => &device_name, "attribute" => k, "value" => format!("{:?}", value));
-            controller.set(device_id, attribute_id, &value)?
+            controller.set(device_id, attribute.id, &value)?
         }
 
         self.repoll.try_send(device_id)?;

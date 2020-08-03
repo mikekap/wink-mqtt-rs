@@ -1,10 +1,10 @@
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::error::Error;
 use std::num::ParseIntError;
 use std::str::FromStr;
 
 use regex::Regex;
-use simple_error::bail;
+use simple_error::{bail, SimpleError};
 use subprocess;
 use std::collections::HashMap;
 
@@ -29,6 +29,34 @@ pub enum AttributeValue {
     NoValue,
     UInt8(u8),
     Bool(bool),
+}
+
+impl AttributeType {
+    pub fn parse(&self, s: &str) -> Result<AttributeValue, Box<dyn Error>> {
+        let payload_str = s.trim();
+        Ok(match self {
+            AttributeType::UInt8 => AttributeValue::UInt8(payload_str.parse::<u8>()?),
+            AttributeType::Bool => AttributeValue::Bool(match payload_str.to_ascii_lowercase().as_str() {
+                "true" | "1" | "yes" | "on" => true,
+                "false" | "0" | "no" | "off" => false,
+                _ => bail!("Bad boolean value: {}", payload_str),
+            })
+        })
+    }
+
+    pub fn parse_json(&self, s: &serde_json::Value) -> Result<AttributeValue, Box<dyn Error>> {
+        Ok(match s {
+            serde_json::Value::Number(n) => {
+                AttributeValue::UInt8(n.as_u64()
+                    .ok_or(SimpleError::new(format!("{} is not a u64", n)))?
+                    .try_into()?)
+            },
+            serde_json::Value::Bool(v) => AttributeValue::Bool(*v),
+            v => {
+                bail!("unknown value for type {:?}: {}", self, v);
+            }
+        })
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
