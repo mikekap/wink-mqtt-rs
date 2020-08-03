@@ -1,5 +1,5 @@
-use crate::controller::DeviceController;
-use async_channel::Sender;
+use crate::controller::{DeviceController, DeviceId};
+use async_channel::{Sender, bounded, Receiver};
 use rumqttc::{EventLoop, Incoming, MqttOptions, Publish, Request, Subscribe};
 use serde_json::value::Value::{Bool, Number, Object};
 use simple_error::{bail, SimpleError};
@@ -8,6 +8,8 @@ use slog_scope;
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
+use tokio::time::Duration;
+use tokio::stream::StreamExt;
 
 pub struct DeviceSyncer<T>
 where
@@ -17,6 +19,7 @@ where
     discovery_prefix: String,
     controller: Mutex<T>,
     sender: Sender<Request>,
+    repoll: Sender<DeviceId>,
 }
 
 impl<T: 'static> DeviceSyncer<T>
@@ -32,16 +35,20 @@ where
         info!(slog_scope::logger(), "opening_client"; "host" => options.broker_address().0, "port" => options.broker_address().1);
         options.set_clean_session(true);
         let ev = EventLoop::new(options, 100).await;
+        let (repoll_sender, repoll_rx) = bounded(10);
         let syncer = DeviceSyncer {
             topic_prefix: topic_prefix.to_string(),
             discovery_prefix: discovery_prefix.to_string(),
             controller: Mutex::new(controller),
             sender: ev.handle(),
+            repoll: repoll_sender,
         };
         let ptr = Arc::new(syncer);
+        let ptr_2 = ptr.clone();
         let ptr_clone = ptr.clone();
         trace!(slog_scope::logger(), "start_thread");
-        tokio::task::spawn(async move { Self::run(ptr, ev).await });
+        tokio::task::spawn(async move { Self::run_mqtt(ptr, ev).await });
+        tokio::task::spawn(async move { Self::run_poller(ptr_2, repoll_rx).await });
         ptr_clone
     }
 
@@ -134,6 +141,8 @@ where
             controller.set(device_id, attribute_id, &value)?
         }
 
+        self.repoll.try_send(device_id)?;
+
         Ok(())
     }
 
@@ -174,12 +183,81 @@ where
         };
     }
 
-    async fn run(this: Arc<Self>, mut ev: EventLoop) -> () {
+    async fn run_mqtt(this: Arc<Self>, mut ev: EventLoop) -> () {
         loop {
             let result = Self::loop_once(this.clone(), &mut ev).await;
             if !result.is_ok() {
                 warn!(slog_scope::logger(), "loop_encountered_error"; "err" => format!("{}", result.unwrap_err()))
             }
+        }
+    }
+
+    fn poll_device_(&self, device_id: DeviceId) -> Result<(), Box<dyn Error>> {
+        let device_info = {
+            self.controller.lock().unwrap().describe(device_id)?
+        };
+        let attributes = device_info.attributes
+            .into_iter()
+            .map(|x| (x.description, match x.setting_value {
+                Some(s) => serde_json::Value::from(s),
+                None => serde_json::Value::Null,
+            }))
+            .collect::<serde_json::Map<_, _>>();
+
+        let payload = serde_json::Value::Object(attributes).to_string();
+        trace!(slog_scope::logger(), "poll_device_status"; "device_id" => device_id, "payload" => &payload);
+
+        self.sender.try_send(Request::Publish(Publish::new(
+            format!("{}{}/status", self.topic_prefix, device_id),
+            rumqttc::QoS::AtLeastOnce,
+            payload,
+        )))?;
+
+        Ok(())
+    }
+
+    async fn poll_device(this: Arc<Self>, device_id: DeviceId) -> () {
+        let _ = tokio::task::spawn_blocking(move || {
+            Self::report_async_result("poll_device", this.poll_device_(device_id))
+        }).await;
+    }
+
+    async fn poll_all_(this: Arc<Self>) -> Result<(), Box<dyn Error>> {
+        let that = this.clone();
+        let all_devices = tokio::task::spawn_blocking(move || -> Result<_, SimpleError> {
+            match that.controller.lock().unwrap().list() {
+                Ok(v) => Ok(v),
+                Err(e) => bail!("{}", e)
+            }
+        }).await??;
+
+        let all_tasks = all_devices
+            .into_iter()
+            .map(|x| {
+                Self::poll_device(this.clone(), x.id)
+            })
+            .collect::<Vec<_>>();
+        for task in all_tasks {
+            task.await
+        };
+        Ok(())
+    }
+
+    async fn poll_all(this: Arc<Self>) -> () {
+        Self::report_async_result("poll_all", Self::poll_all_(this).await)
+    }
+
+    async fn run_poller(this: Arc<Self>, rx: Receiver<DeviceId>) -> () {
+        let mut timer = tokio::time::interval(Duration::from_secs(10));
+        loop {
+            tokio::select! {
+                _ = timer.tick() => {
+                    Self::poll_all(this.clone()).await;
+                },
+                device_id = rx.recv() => {
+                    Self::poll_device(this.clone(), device_id.unwrap()).await;
+                }
+            };
         }
     }
 }

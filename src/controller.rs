@@ -14,8 +14,8 @@ pub type DeviceStatus = String;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ShortDevice {
-    id: DeviceId,
-    name: String,
+    pub id: DeviceId,
+    pub name: String,
 }
 
 #[derive(Debug, Eq, PartialEq)]
