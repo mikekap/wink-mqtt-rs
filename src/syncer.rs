@@ -1,4 +1,4 @@
-use crate::controller::{DeviceController, DeviceId};
+use crate::controller::{DeviceController, DeviceId, AttributeValue};
 use async_channel::{Sender, bounded, Receiver};
 use rumqttc::{EventLoop, Incoming, MqttOptions, Publish, Request, Subscribe};
 use serde_json::value::Value::{Bool, Number, Object};
@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use tokio::time::Duration;
-use tokio::stream::StreamExt;
+use std::convert::TryFrom;
 
 pub struct DeviceSyncer<T>
 where
@@ -129,15 +129,15 @@ where
             };
 
             let value = match v {
-                Number(n) => format!("{}", n),
-                Bool(v) => if *v { "TRUE" } else { "FALSE" }.to_string(),
-                serde_json::Value::String(s) => s.clone(),
+                Number(n) => AttributeValue::UInt8(n.as_u64().and_then(|x| u8::try_from(x).ok()).unwrap_or(if n.as_i64().unwrap_or(0) < 0 { 0 } else { 255 })),
+                Bool(v) => AttributeValue::Bool(*v),
+                // serde_json::Value::String(s) => s.clone(),
                 v => {
                     error!(slog_scope::logger(), "unknown_setting_for_key"; "key" => k, "value" => format!("{}", v));
                     continue;
                 }
             };
-            info!(slog_scope::logger(), "set"; "device_id" => device_id, "device_name" => &device_name, "attribute_name" => k, "value" => &value);
+            info!(slog_scope::logger(), "set"; "device_id" => device_id, "device_name" => &device_name, "attribute_name" => k, "value" => format!("{:?}", value));
             controller.set(device_id, attribute_id, &value)?
         }
 
@@ -199,8 +199,9 @@ where
         let attributes = device_info.attributes
             .into_iter()
             .map(|x| (x.description, match x.setting_value {
-                Some(s) => serde_json::Value::from(s),
-                None => serde_json::Value::Null,
+                AttributeValue::NoValue => serde_json::Value::Null,
+                AttributeValue::Bool(b) => serde_json::Value::Bool(b),
+                AttributeValue::UInt8(i) => serde_json::Value::Number(serde_json::Number::from(i)),
             }))
             .collect::<serde_json::Map<_, _>>();
 

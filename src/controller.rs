@@ -7,6 +7,7 @@ use regex::Regex;
 use simple_error::bail;
 use subprocess;
 use std::collections::HashMap;
+use crate::controller::AttributeType::UInt8;
 
 pub type AttributeId = u32;
 pub type DeviceId = u32;
@@ -18,15 +19,28 @@ pub struct ShortDevice {
     pub name: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttributeType {
+    UInt8,
+    Bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttributeValue {
+    NoValue,
+    UInt8(u8),
+    Bool(bool),
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct DeviceAttribute {
     pub id: AttributeId,
     pub description: String,
-    pub attribute_type: String,
+    pub attribute_type: AttributeType,
     pub supports_write: bool,
     pub supports_read: bool,
-    pub current_value: Option<String>,
-    pub setting_value: Option<String>,
+    pub current_value: AttributeValue,
+    pub setting_value: AttributeValue,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -52,7 +66,7 @@ pub trait DeviceController: Send {
         &mut self,
         master_id: DeviceId,
         attribute_id: AttributeId,
-        value: &str,
+        value: &AttributeValue,
     ) -> Result<(), Box<dyn Error>>;
 }
 
@@ -114,6 +128,20 @@ impl Numberish for str {
             Err(_) => Err(u8::from_str("257").unwrap_err()),
         }
     }
+}
+
+fn parse_attr_value(t: AttributeType, v: &str) -> Result<AttributeValue, Box<dyn Error>> {
+    Ok(match v {
+        "" => AttributeValue::NoValue,
+        v => match t {
+            AttributeType::UInt8 => AttributeValue::UInt8(v.parse()?),
+            AttributeType::Bool => AttributeValue::Bool(match v {
+                "TRUE" => true,
+                "FALSE" => false,
+                _ => bail!("Bad attribute value: {}", v)
+            })
+        },
+    })
 }
 
 impl DeviceController for AprontestController {
@@ -178,20 +206,19 @@ impl DeviceController for AprontestController {
             attributes: ATTRIBUTE_REGEX
                 .captures_iter(parsed.name("attributes").unwrap().as_str())
                 .map(|m| -> Result<DeviceAttribute, Box<dyn Error>> {
+                    let attribute_type = match m.name("type").unwrap().as_str() {
+                        "UINT8" => AttributeType::UInt8,
+                        "BOOL" => AttributeType::Bool,
+                        _ => bail!("Bad attribute type: {}", m.name("type").unwrap().as_str())
+                    };
                     Ok(DeviceAttribute {
                         id: m.name("id").unwrap().as_str().parse()?,
                         description: m.name("description").unwrap().as_str().trim().to_string(),
-                        attribute_type: m.name("type").unwrap().as_str().to_string(),
+                        attribute_type,
                         supports_write: m.name("mode").unwrap().as_str().contains("W"),
                         supports_read: m.name("mode").unwrap().as_str().contains("R"),
-                        current_value: match m.name("get").unwrap().as_str().trim() {
-                            "" => None,
-                            v => Some(v.to_string()),
-                        },
-                        setting_value: match m.name("set").unwrap().as_str().trim() {
-                            "" => None,
-                            v => Some(v.to_string()),
-                        },
+                        current_value: parse_attr_value(attribute_type, m.name("get").unwrap().as_str().trim())?,
+                        setting_value: parse_attr_value(attribute_type, m.name("set").unwrap().as_str().trim())?,
                     })
                 })
                 .collect::<Result<Vec<DeviceAttribute>, Box<dyn Error>>>()?,
@@ -202,8 +229,13 @@ impl DeviceController for AprontestController {
         &mut self,
         master_id: DeviceId,
         attribute_id: AttributeId,
-        value: &str,
+        value: &AttributeValue,
     ) -> Result<(), Box<dyn Error>> {
+        let value = match value {
+            AttributeValue::NoValue => bail!("Invalid attribute value: none"),
+            AttributeValue::UInt8(v) => format!("{}", v),
+            AttributeValue::Bool(v) => if (*v) { "TRUE" } else { "FALSE" }.to_string(),
+        };
         (self.runner)(&[
             "aprontest",
             "-u",
@@ -212,14 +244,14 @@ impl DeviceController for AprontestController {
             "-t",
             &format!("{}", attribute_id),
             "-v",
-            &format!("{}", value),
+            &value,
         ])?;
         Ok(())
     }
 }
 
 pub struct FakeController {
-    attr_values : HashMap<(DeviceId, AttributeId), String>
+    attr_values : HashMap<(DeviceId, AttributeId), AttributeValue>
 }
 
 impl FakeController {
@@ -254,38 +286,38 @@ impl DeviceController for FakeController {
                         DeviceAttribute {
                             id: 1,
                             description: "GenericValue".to_string(),
-                            attribute_type: "UINT8".to_string(),
+                            attribute_type: AttributeType::UInt8,
                             supports_write: true,
                             supports_read: true,
-                            current_value: Some(self.attr_values.get(&(master_id, 1 as AttributeId)).map(|x| x.as_str()).unwrap_or("0").to_string()),
-                            setting_value: Some(self.attr_values.get(&(master_id, 1 as AttributeId)).map(|x| x.as_str()).unwrap_or("0").to_string()),
+                            current_value: *self.attr_values.get(&(master_id, 1 as AttributeId)).unwrap_or(&AttributeValue::UInt8(0)),
+                            setting_value: *self.attr_values.get(&(master_id, 1 as AttributeId)).unwrap_or(&AttributeValue::UInt8(0)),
                         },
                         DeviceAttribute {
                             id: 3,
                             description: "Level".to_string(),
-                            attribute_type: "UINT8".to_string(),
+                            attribute_type: AttributeType::UInt8,
                             supports_write: true,
                             supports_read: true,
-                            current_value: Some(self.attr_values.get(&(master_id, 3 as AttributeId)).map(|x| x.as_str()).unwrap_or("0").to_string()),
-                            setting_value: Some(self.attr_values.get(&(master_id, 3 as AttributeId)).map(|x| x.as_str()).unwrap_or("0").to_string()),
+                            current_value: *self.attr_values.get(&(master_id, 3 as AttributeId)).unwrap_or(&AttributeValue::UInt8(0)),
+                            setting_value: *self.attr_values.get(&(master_id, 3 as AttributeId)).unwrap_or(&AttributeValue::UInt8(0)),
                         },
                         DeviceAttribute {
                             id: 4,
                             description: "Up_Down".to_string(),
-                            attribute_type: "BOOL".to_string(),
+                            attribute_type: AttributeType::Bool,
                             supports_write: true,
                             supports_read: false,
-                            current_value: None,
-                            setting_value: None
+                            current_value: AttributeValue::NoValue,
+                            setting_value: AttributeValue::NoValue,
                         },
                         DeviceAttribute {
                             id: 5,
                             description: "StopMovement".to_string(),
-                            attribute_type: "BOOL".to_string(),
+                            attribute_type: AttributeType::Bool,
                             supports_write: true,
                             supports_read: false,
-                            current_value: None,
-                            setting_value: None
+                            current_value: AttributeValue::NoValue,
+                            setting_value: AttributeValue::NoValue,
                         }
                     ]
                 }),
@@ -294,11 +326,11 @@ impl DeviceController for FakeController {
         }
     }
 
-    fn set(&mut self, master_id: u32, attribute_id: u32, value: &str) -> Result<(), Box<dyn Error>> {
-        if master_id != 2 || attribute_id < 1 || attribute_id > 5 {
+    fn set(&mut self, master_id: u32, attribute_id: u32, value: &AttributeValue) -> Result<(), Box<dyn Error>> {
+        if master_id != 2 || attribute_id < 1 || attribute_id > 5 || *value == AttributeValue::NoValue {
             bail!("Invalid inputs: {}/{}", master_id, attribute_id)
         }
-        self.attr_values.insert((master_id, attribute_id), value.to_string());
+        self.attr_values.insert((master_id, attribute_id), value.clone());
         Ok(())
     }
 }
@@ -376,38 +408,38 @@ Bedroom Fan
                     DeviceAttribute {
                         id: 1,
                         description: "GenericValue".to_string(),
-                        attribute_type: "UINT8".to_string(),
+                        attribute_type: AttributeType::UInt8,
                         supports_write: true,
                         supports_read: true,
-                        current_value: Some("0".to_string()),
-                        setting_value: Some("0".to_string())
+                        current_value: AttributeValue::UInt8(0),
+                        setting_value: AttributeValue::UInt8(0),
                     },
                     DeviceAttribute {
                         id: 3,
                         description: "Level".to_string(),
-                        attribute_type: "UINT8".to_string(),
+                        attribute_type: AttributeType::UInt8,
                         supports_write: true,
                         supports_read: true,
-                        current_value: Some("0".to_string()),
-                        setting_value: Some("0".to_string())
+                        current_value: AttributeValue::UInt8(0),
+                        setting_value: AttributeValue::UInt8(0),
                     },
                     DeviceAttribute {
                         id: 4,
                         description: "Up_Down".to_string(),
-                        attribute_type: "BOOL".to_string(),
+                        attribute_type: AttributeType::Bool,
                         supports_write: true,
                         supports_read: false,
-                        current_value: None,
-                        setting_value: None
+                        current_value: AttributeValue::NoValue,
+                        setting_value: AttributeValue::NoValue,
                     },
                     DeviceAttribute {
                         id: 5,
                         description: "StopMovement".to_string(),
-                        attribute_type: "BOOL".to_string(),
+                        attribute_type: AttributeType::Bool,
                         supports_write: true,
                         supports_read: false,
-                        current_value: None,
-                        setting_value: None
+                        current_value: AttributeValue::NoValue,
+                        setting_value: AttributeValue::NoValue,
                     }
                 ]
             },
