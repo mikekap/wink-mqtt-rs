@@ -59,6 +59,16 @@ impl AttributeType {
     }
 }
 
+impl AttributeValue {
+    pub fn or(&self, other: &AttributeValue) -> AttributeValue {
+        if *self == AttributeValue::NoValue {
+            return other.clone()
+        } else {
+            return self.clone()
+        }
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct DeviceAttribute {
     pub id: AttributeId,

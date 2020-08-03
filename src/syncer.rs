@@ -17,6 +17,7 @@ where
 {
     topic_prefix: String,
     discovery_prefix: Option<String>,
+    discovery_listen_topic: Option<String>,
     controller: Mutex<T>,
     sender: Sender<Request>,
     repoll: Sender<DeviceId>,
@@ -30,6 +31,7 @@ where
         mut options: MqttOptions,
         topic_prefix: &str,
         discovery_prefix: Option<&str>,
+        discovery_listen_topic: Option<&str>,
         controller: T,
     ) -> Arc<DeviceSyncer<T>> {
         info!(slog_scope::logger(), "opening_client"; "host" => options.broker_address().0, "port" => options.broker_address().1);
@@ -39,18 +41,19 @@ where
         let syncer = DeviceSyncer {
             topic_prefix: topic_prefix.to_string(),
             discovery_prefix: discovery_prefix.map(|x| x.to_string()),
+            discovery_listen_topic: discovery_listen_topic.map(|x| x.to_string()),
             controller: Mutex::new(controller),
             sender: ev.handle(),
             repoll: repoll_sender,
         };
         let ptr = Arc::new(syncer);
-        let ptr_2 = ptr.clone();
-        let ptr_3 = ptr.clone();
         let ptr_clone = ptr.clone();
         trace!(slog_scope::logger(), "start_thread");
         tokio::task::spawn(async move { Self::run_mqtt(ptr, ev).await });
+        let ptr_2 = ptr_clone.clone();
         tokio::task::spawn(async move { Self::run_poller(ptr_2, repoll_rx).await });
         if ptr_clone.discovery_prefix.is_some() {
+            let ptr_3 = ptr_clone.clone();
             tokio::task::spawn(async move { Self::broadcast_discovery(ptr_3).await });
         }
         ptr_clone
@@ -66,6 +69,16 @@ where
             format!("{}+/+/set", &self.topic_prefix),
             rumqttc::QoS::AtLeastOnce,
         ))).await?;
+
+        if let Some(topic) = &self.discovery_listen_topic {
+            self.sender.send(Request::Subscribe(Subscribe::new(
+                topic,
+                rumqttc::QoS::AtLeastOnce,
+            ))).await?;
+        }
+
+        self.repoll.send(0).await?;
+
         Ok(())
     }
 
@@ -79,11 +92,14 @@ where
         if message.topic.starts_with(this.topic_prefix.as_str()) {
             tokio::task::spawn_blocking(move || {
                 Self::report_async_result("set", this.process_one_control_message(message))
-            });
-            Ok(())
+            })
+        } else if this.discovery_listen_topic.is_some() && message.topic == *this.discovery_listen_topic.as_ref().unwrap() {
+            tokio::task::spawn(async move { Self::broadcast_discovery(this).await })
         } else {
             bail!("Unknown message topic: {}", message.topic)
-        }
+        };
+
+        Ok(())
     }
 
     fn process_one_control_message(&self, message: Publish) -> Result<(), Box<dyn Error>> {
@@ -125,6 +141,8 @@ where
 
         self.controller.lock().unwrap().set(device_id, attribute_id, &value)?;
         info!(slog_scope::logger(), "set"; "device_id" => device_id, "device" => &device_name, "attribute" => &attribute.description, "value" => format!("{:?}", value));
+
+        self.repoll.try_send(device_id)?;
 
         Ok(())
     }
@@ -240,7 +258,7 @@ where
         };
         let attributes = device_info.attributes
             .into_iter()
-            .map(|x| (x.description, match x.setting_value {
+            .map(|x| (x.description, match x.setting_value.or(&x.current_value) {
                 AttributeValue::NoValue => serde_json::Value::Null,
                 AttributeValue::Bool(b) => serde_json::Value::Bool(b),
                 AttributeValue::UInt8(i) => serde_json::Value::Number(serde_json::Number::from(i)),
@@ -250,11 +268,13 @@ where
         let payload = serde_json::Value::Object(attributes).to_string();
         trace!(slog_scope::logger(), "poll_device_status"; "device_id" => device_id, "payload" => &payload);
 
-        self.sender.try_send(Request::Publish(Publish::new(
+        let mut publish = Publish::new(
             format!("{}{}/status", self.topic_prefix, device_id),
             rumqttc::QoS::AtLeastOnce,
             payload,
-        )))?;
+        );
+        publish.set_retain(true);
+        self.sender.try_send(Request::Publish(publish))?;
 
         Ok(())
     }
@@ -291,16 +311,22 @@ where
     }
 
     async fn run_poller(this: Arc<Self>, rx: Receiver<DeviceId>) -> () {
-        let mut timer = tokio::time::interval(Duration::from_secs(10));
+        let that = this.clone();
+        tokio::task::spawn(async move {
+            let mut timer = tokio::time::interval(Duration::from_secs(10));
+            loop {
+                timer.tick().await;
+                let _ = that.repoll.send(0).await;
+            }
+        });
         loop {
-            tokio::select! {
-                _ = timer.tick() => {
-                    Self::poll_all(this.clone()).await;
-                },
-                device_id = rx.recv() => {
-                    Self::poll_device(this.clone(), device_id.unwrap()).await;
-                }
-            };
+            let device_id = rx.recv().await.unwrap();
+            trace!(slog_scope::logger(), "requested_repoll"; "device_id" => device_id);
+            if device_id == 0 {
+                Self::poll_all(this.clone()).await;
+            } else {
+                Self::poll_device(this.clone(), device_id).await;
+            }
         }
     }
 
@@ -317,7 +343,7 @@ where
 
         match device_to_discovery_payload(&this.topic_prefix, &device) {
             Some(v) => {
-                let topic = format!("{}{}/wink/{}/config", this.discovery_prefix.as_ref().unwrap(), v.component, device.id);
+                let topic = format!("{}{}/wink_{}/config", this.discovery_prefix.as_ref().unwrap(), v.component, device.id);
                 let config = v.discovery_info.to_string();
                 debug!(slog_scope::logger(), "broadcast_discovery_result"; "id" => id, "topic" => &topic, "config" => &config);
                 this.sender.send(Request::Publish(Publish::new(

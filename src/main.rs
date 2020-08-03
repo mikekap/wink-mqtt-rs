@@ -137,6 +137,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
         options,
         matches.value_of("topic-prefix").unwrap(),
         matches.value_of("discovery-prefix"),
+        matches.value_of("discovery-listen-topic"),
         controller,
     )
     .await;
