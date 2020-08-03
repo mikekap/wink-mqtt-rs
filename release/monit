@@ -1,0 +1,4 @@
+check process wink-mqtt-rs with pidfile /var/run/wink-mqtt-rs.pid
+    start program = "/etc/rc.d/init.d/wink-mqtt-rs start"
+    stop program = "/etc/rc.d/init.d/wink-mqtt-rs stop"
+    depends on aprond
