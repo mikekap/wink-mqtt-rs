@@ -6,6 +6,12 @@ This is a rust implementation of an MQTT daemon to run on the wink hub (1, not 2
 
 TODO. See release folder for a cross-compilation + files you'll want to put in place.
 
+<!--
+```
+curl --cacert /etc/ssl/certs/ca-certificates.crt https://raw.githubusercontent.com/mikekap/wink-mqtt-rs/master/release/get_latest_release.sh | bash
+```
+-->
+
 ## Usage
 ```bash
 wink-mqtt-rs 0.1.0
@@ -35,6 +41,13 @@ OPTIONS:
 ```
 
 The default setup in release/ will read these options from /opt/wink-mqtt-rs/config .
+
+## Known Issues
+ - This has only been test with Z-Wave devices. Somewhat unlikely to work with others.
+   This is very easy to fix, so please file issues with the output of `aprontest -l` and `aprontest -l -m <device_id>`.
+ - Does not send device info to Home Assistant, even though the data exists.
+ - `mqtts` support is untested.
+ - Could be smarter about tailing log files (like wink-mqtt), but a resync every 10 seconds seems fine.
 
 ## License
 
