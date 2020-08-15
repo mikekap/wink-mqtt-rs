@@ -14,19 +14,16 @@ jobs:
 
     steps:
     - name: Rust Nightly
-      run: rustup toolchain install nightly
+      run: rustup toolchain install nightly && rustup component add rustfmt --toolchain nightly
     - uses: actions/checkout@v2
     - name: Build
       run: cargo +nightly build --verbose
     - name: Run tests
       run: cargo +nightly test --verbose
-    - name: Format code & commit
+    - name: Formatted code
       run: |
-        rustup component add rustfmt --toolchain nightly
         cargo +nightly fmt
-        git config --global user.name 'Bot'
-        git config --global user.email 'mikekap@users.noreply.github.com'
         if [[ -n "$(git status --porcelain)" ]]; then
-          git commit -am "Format code"
-          git push
+          echo "Your code is not formatted - please run cargo +nightly fmt";
+          exit 1;
         fi
