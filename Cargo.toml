@@ -32,4 +32,3 @@ lto = true
 codegen-units = 1
 panic = 'abort'
 strip = "symbols"
-target = "armv5te-unknown-linux-musleabi"
