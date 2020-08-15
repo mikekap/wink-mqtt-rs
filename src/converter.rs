@@ -1,4 +1,4 @@
-use crate::controller::{LongDevice, AttributeType};
+use crate::controller::{AttributeType, LongDevice};
 use serde_json::json;
 
 pub struct AutodiscoveryMessage {
@@ -6,14 +6,17 @@ pub struct AutodiscoveryMessage {
     pub discovery_info: serde_json::Value,
 }
 
-pub fn device_to_discovery_payload(topic_prefix: &str, device: &LongDevice) -> Option<AutodiscoveryMessage> {
+pub fn device_to_discovery_payload(
+    topic_prefix: &str,
+    device: &LongDevice,
+) -> Option<AutodiscoveryMessage> {
     if device.attribute("Up_Down").is_some() && device.attribute("Level").is_some() {
-        return Some(dimmer_to_discovery_payload(topic_prefix, device))
+        return Some(dimmer_to_discovery_payload(topic_prefix, device));
     }
     if device.attribute("On_Off").is_some() {
         return Some(switch_to_discovery_payload(topic_prefix, device));
     }
-    return None
+    return None;
 }
 
 fn switch_to_discovery_payload(topic_prefix: &str, device: &LongDevice) -> AutodiscoveryMessage {
@@ -29,7 +32,7 @@ fn switch_to_discovery_payload(topic_prefix: &str, device: &LongDevice) -> Autod
             "command_topic": format!("{}{}/{}/set", topic_prefix, device.id, on_off.id),
             "payload_on": "true",
             "payload_off": "false",
-        })
+        }),
     }
 }
 
@@ -56,6 +59,6 @@ fn dimmer_to_discovery_payload(topic_prefix: &str, device: &LongDevice) -> Autod
             "brightness_command_topic": format!("{}{}/{}/set", topic_prefix, device.id, level.id),
             "brightness_value_template": "{{value_json.Level}}",
             "brightness_scale": scale,
-        })
+        }),
     }
 }

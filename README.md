@@ -47,6 +47,7 @@ OPTIONS:
 The default setup in release/ will read these options from /opt/wink-mqtt-rs/config .
 
 ## Known Issues
+ - Groups are not exposed.
  - This has only been test with Z-Wave devices. Somewhat unlikely to work with others.
    This is very easy to fix, so please file issues with the output of `aprontest -l` and `aprontest -l -m <device_id>`.
  - Does not send device info to Home Assistant, even though the data exists.
@@ -57,6 +58,20 @@ The default setup in release/ will read these options from /opt/wink-mqtt-rs/con
 To uninstall, run:
 ```bash
 /opt/wink-mqtt-rs/uninstall.sh
+```
+
+## Developing
+This is a vanilla Rust project - just use cargo nightly.
+
+### Running Locally
+You can run wink-mqtt-rs locally, though obviously it won't control any lights. There's a fake implementation of aprontest for local use
+that mostly just pretends whatever you do to it succeeded.
+
+### Running on the Wink
+Use `./release/build_release.sh` to build a ARM binary (requires docker). Then you can:
+```bash
+scp target/armv5te-unknown-linux-musleabi/release/wink-mqtt-rs root@wink:/opt/wink-mqtt-rs/
+ssh root@wink-mqtt-rs /etc/rc.d/init.d/wink-mqtt-rs restart
 ```
 
 ## License

@@ -18,8 +18,8 @@ use tokio::{self, time::Duration};
 use url::Url;
 
 mod controller;
-mod syncer;
 mod converter;
+mod syncer;
 
 fn init_logger(args: &ArgMatches) -> GlobalLoggerGuard {
     let min_log_level = match args.occurrences_of("verbose") {
@@ -28,7 +28,10 @@ fn init_logger(args: &ArgMatches) -> GlobalLoggerGuard {
         2 | _ => slog::Level::Trace,
     };
     let decorator = slog_term::PlainSyncDecorator::new(std::io::stderr());
-    let drain = slog_term::FullFormat::new(decorator).build().filter_level(min_log_level).fuse();
+    let drain = slog_term::FullFormat::new(decorator)
+        .build()
+        .filter_level(min_log_level)
+        .fuse();
     let logger = slog::Logger::root(drain, o!());
     info!(logger, "init_logger"; "min_log_level" => format!("{:?}", min_log_level));
 
@@ -131,7 +134,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     let options = init_mqtt_client(&matches)?;
     #[cfg(target_arch = "arm")]
     let controller = controller::AprontestController::new();
-    #[cfg(not (target_arch = "arm"))]
+    #[cfg(not(target_arch = "arm"))]
     let controller = controller::FakeController::new();
     let _ = syncer::DeviceSyncer::new(
         options,
