@@ -22,4 +22,7 @@ jobs:
       run: cargo +nightly test --verbose
     - name: Format code & commit
       run: |
+        cargo +nightly fmt
+        git config --global user.name 'Bot'
+        git config --global user.email 'mikekap@users.noreply.github.com'
         
