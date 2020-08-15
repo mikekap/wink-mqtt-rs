@@ -31,5 +31,4 @@ opt-level = 'z'  # Optimize for size.
 lto = true
 codegen-units = 1
 panic = 'abort'
-strip = "symbols"
-target = "armv5te-unknown-linux-musleabi"
+# strip = "symbols"
