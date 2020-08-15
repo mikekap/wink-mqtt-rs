@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    - name: Rust Nightly
+      run: rustup toolchain install nightly
     - uses: actions/checkout@v2
     - name: Build
       run: cargo +nightly build --verbose
