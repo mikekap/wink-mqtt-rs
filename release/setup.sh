@@ -17,7 +17,7 @@ read TOPIC_PREFIX
 echo -n "Discovery topic prefix for broadcast (enter to disable): "
 read DISCOVERY_PREFIX
 
-echo "-s $MQTT_SERVER" > /opt/wink-mqtt-rs/config
+echo "-s mqtt://$MQTT_SERVER" > /opt/wink-mqtt-rs/config
 if [[ ! -z $TOPIC_PREFIX ]]; then
     echo "-t '$TOPIC_PREFIX'" >> /opt/wink-mqtt-rs/config
 fi
@@ -29,5 +29,5 @@ cp /opt/wink-mqtt-rs/mqtt.sh /etc/rc.d/init.d/wink-mqtt-rs
 chmod +x /etc/rc.d/init.d/wink-mqtt-rs
 
 cp /etc/monitrc /etc/monitrc.bak
-cat ./monit >> /etc/monitrc
+cat /opt/wink-mqtt-rs/monit >> /etc/monitrc
 monit reload

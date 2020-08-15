@@ -4,13 +4,15 @@ This is a rust implementation of an MQTT daemon to run on the wink hub (1, not 2
 
 ## Installation
 
-TODO. See release folder for a cross-compilation + files you'll want to put in place.
+First you need to have root on your wink hub. [This tutorial](todo) has instructions on how to root your hub.
 
-<!--
+Once you have root on your hub, run the following command from your root shell:
+
+```bash
+curl --cacert /etc/ssl/certs/ca-certificates.crt https://raw.githubusercontent.com/mikekap/wink-mqtt-rs/master/release/latest/wink-mqtt-rs.tar.gz | tar -C / -zxvf - && /opt/wink-mqtt-rs/setup.sh
 ```
-curl --cacert /etc/ssl/certs/ca-certificates.crt https://raw.githubusercontent.com/mikekap/wink-mqtt-rs/master/release/get_latest_release.sh | bash
-```
--->
+
+and follow the prompts!
 
 ## Usage
 ```bash
@@ -48,6 +50,12 @@ The default setup in release/ will read these options from /opt/wink-mqtt-rs/con
  - Does not send device info to Home Assistant, even though the data exists.
  - `mqtts` support is untested.
  - Could be smarter about tailing log files (like wink-mqtt), but a resync every 10 seconds seems fine.
+
+## Uninstalling
+To uninstall, run:
+```bash
+/opt/wink-mqtt-rs/uninstall.sh
+```
 
 ## License
 

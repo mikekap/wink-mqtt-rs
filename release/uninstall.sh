@@ -3,7 +3,7 @@ set -exo pipefail
 
 echo "Removing wink-mqtt-rs..."
 
-# Monit?
+# TODO: Uninstall monit better? This just recovers the backup...
 cp /etc/monitrc.bak /etc/monitrc
 monit reload
 
