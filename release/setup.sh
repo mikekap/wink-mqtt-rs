@@ -3,6 +3,7 @@ set -eo pipefail
 
 if [[ -f /opt/wink-mqtt-rs/config ]]; then
     echo "Updating wink-mqtt-rs - skipping config...";
+    /etc/rc.d/init.d/wink-mqtt-rs restart
     exit 0;
 fi
 
@@ -27,4 +28,6 @@ fi
 cp /opt/wink-mqtt-rs/mqtt.sh /etc/rc.d/init.d/wink-mqtt-rs
 chmod +x /etc/rc.d/init.d/wink-mqtt-rs
 
+cp /etc/monitrc /etc/monitrc.bak
 cat ./monit >> /etc/monitrc
+monit reload

@@ -12,6 +12,7 @@ case "${1}" in
   stop)
     echo "Stopping wink-mqtt-rs..."
     start-stop-daemon --pidfile=/var/run/wink-mqtt-rs.pid -K
+    rm /var/run/wink-mqtt-rs.pid
     ;;
 
   restart)
