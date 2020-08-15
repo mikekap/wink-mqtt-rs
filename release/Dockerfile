@@ -7,3 +7,4 @@ RUN wget https://musl.cc/arm-linux-musleabi-cross.tgz && tar -zxvf arm-linux-mus
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN rustup toolchain install nightly && rustup default nightly-x86_64-unknown-linux-gnu && rustup target add armv5te-unknown-linux-musleabi
+ENV TARGET_CC=arm-linux-musleabi-gcc

@@ -35,7 +35,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: target/armv5te-unknown-linux-musleabi/release/wink-mqtt-rs
-        asset_name: wink-mqtt-rs
-        asset_content_type: application/octet-stream
-
+        asset_path: target/wink-mqtt-rs.tar.gz
+        asset_name: wink-mqtt-rs.tar.gz
+        asset_content_type: application/tar+gzip
