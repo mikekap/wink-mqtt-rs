@@ -1,4 +1,4 @@
-name: Rust
+name: Branch Build
 
 on:
   pull_request:
@@ -20,3 +20,6 @@ jobs:
       run: cargo +nightly build --verbose
     - name: Run tests
       run: cargo +nightly test --verbose
+    - name: Format code & commit
+      run: |
+        
