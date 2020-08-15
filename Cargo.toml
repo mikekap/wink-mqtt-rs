@@ -1,4 +1,4 @@
-cargo-features = ["strip"]
+#R cargo-features = ["strip"]
 
 [package]
 name = "wink-mqtt-rs"
@@ -31,3 +31,4 @@ opt-level = 'z'  # Optimize for size.
 lto = true
 codegen-units = 1
 panic = 'abort'
+#R strip="symbols"
