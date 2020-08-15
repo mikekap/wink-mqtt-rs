@@ -25,4 +25,7 @@ jobs:
         cargo +nightly fmt
         git config --global user.name 'Bot'
         git config --global user.email 'mikekap@users.noreply.github.com'
-        
+        if [[ -n "$(git status --porcelain)" ]]; then
+          git commit -am "Format code"
+          git push
+        fi
