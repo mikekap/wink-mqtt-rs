@@ -9,7 +9,7 @@ First you need to have root on your wink hub. [This tutorial](todo) has instruct
 Once you have root on your hub, run the following command from your root shell:
 
 ```bash
-curl --cacert /etc/ssl/certs/ca-certificates.crt https://github.com/mikekap/wink-mqtt-rs/releases/latest/download/wink-mqtt-rs.tar.gz | tar -C / -zxvf - && /opt/wink-mqtt-rs/setup.sh
+curl -L --cacert /etc/ssl/certs/ca-certificates.crt https://github.com/mikekap/wink-mqtt-rs/releases/latest/download/wink-mqtt-rs.tar.gz | tar -C / -zxvf - && /opt/wink-mqtt-rs/setup.sh
 ```
 
 and follow the prompts! 
