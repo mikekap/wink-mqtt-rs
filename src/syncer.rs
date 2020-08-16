@@ -34,9 +34,10 @@ where
         topic_prefix: &str,
         discovery_prefix: Option<&str>,
         discovery_listen_topic: Option<&str>,
+        resync_interval: u64,
         controller: T,
     ) -> Arc<DeviceSyncer<T>> {
-        info!(slog_scope::logger(), "opening_client"; "host" => options.broker_address().0, "port" => options.broker_address().1);
+        info!(slog_scope::logger(), "opening_client"; "host" => options.broker_address().0, "port" => options.broker_address().1, "client_id" => &options.client_id());
         options.set_clean_session(true);
         let ev = EventLoop::new(options, 100).await;
         let (repoll_sender, repoll_rx) = bounded(10);
@@ -52,8 +53,10 @@ where
         let ptr_clone = ptr.clone();
         trace!(slog_scope::logger(), "start_thread");
         tokio::task::spawn(async move { Self::run_mqtt(ptr, ev).await });
+
         let ptr_2 = ptr_clone.clone();
-        tokio::task::spawn(async move { Self::run_poller(ptr_2, repoll_rx).await });
+        tokio::task::spawn(async move { Self::run_poller(ptr_2, resync_interval, repoll_rx).await });
+
         if ptr_clone.discovery_prefix.is_some() {
             let ptr_3 = ptr_clone.clone();
             tokio::task::spawn(async move { Self::broadcast_discovery(ptr_3).await });
@@ -343,10 +346,11 @@ where
         Self::report_async_result("poll_all", Self::poll_all_(this).await)
     }
 
-    async fn run_poller(this: Arc<Self>, rx: Receiver<DeviceId>) -> () {
+    async fn run_poller(this: Arc<Self>, resync_interval: u64, rx: Receiver<DeviceId>) -> () {
         let that = this.clone();
+        info!(slog_scope::logger(), "poller_starting"; "resync_interval" => resync_interval);
         tokio::task::spawn(async move {
-            let mut timer = tokio::time::interval(Duration::from_secs(10));
+            let mut timer = tokio::time::interval(Duration::from_millis(resync_interval));
             loop {
                 timer.tick().await;
                 let _ = that.repoll.send(0).await;
@@ -387,6 +391,7 @@ where
                     device.id
                 );
                 let config = v.discovery_info.to_string();
+                info!(slog_scope::logger(), "discovered_device"; "id" => id, "name" => &device.name);
                 debug!(slog_scope::logger(), "broadcast_discovery_result"; "id" => id, "topic" => &topic, "config" => &config);
                 this.sender
                     .send(Request::Publish(Publish::new(
