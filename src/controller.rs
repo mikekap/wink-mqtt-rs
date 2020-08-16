@@ -5,8 +5,8 @@ use std::str::FromStr;
 
 use regex::Regex;
 use simple_error::{bail, SimpleError};
-use subprocess;
 use std::collections::HashMap;
+use subprocess;
 
 pub type AttributeId = u32;
 pub type DeviceId = u32;
@@ -36,21 +36,23 @@ impl AttributeType {
         let payload_str = s.trim();
         Ok(match self {
             AttributeType::UInt8 => AttributeValue::UInt8(payload_str.parse::<u8>()?),
-            AttributeType::Bool => AttributeValue::Bool(match payload_str.to_ascii_lowercase().as_str() {
-                "true" | "1" | "yes" | "on" => true,
-                "false" | "0" | "no" | "off" => false,
-                _ => bail!("Bad boolean value: {}", payload_str),
-            })
+            AttributeType::Bool => {
+                AttributeValue::Bool(match payload_str.to_ascii_lowercase().as_str() {
+                    "true" | "1" | "yes" | "on" => true,
+                    "false" | "0" | "no" | "off" => false,
+                    _ => bail!("Bad boolean value: {}", payload_str),
+                })
+            }
         })
     }
 
     pub fn parse_json(&self, s: &serde_json::Value) -> Result<AttributeValue, Box<dyn Error>> {
         Ok(match s {
-            serde_json::Value::Number(n) => {
-                AttributeValue::UInt8(n.as_u64()
+            serde_json::Value::Number(n) => AttributeValue::UInt8(
+                n.as_u64()
                     .ok_or(SimpleError::new(format!("{} is not a u64", n)))?
-                    .try_into()?)
-            },
+                    .try_into()?,
+            ),
             serde_json::Value::Bool(v) => AttributeValue::Bool(*v),
             v => {
                 bail!("unknown value for type {:?}: {}", self, v);
@@ -62,9 +64,9 @@ impl AttributeType {
 impl AttributeValue {
     pub fn or(&self, other: &AttributeValue) -> AttributeValue {
         if *self == AttributeValue::NoValue {
-            return other.clone()
+            return other.clone();
         } else {
-            return self.clone()
+            return self.clone();
         }
     }
 }
@@ -181,8 +183,8 @@ fn parse_attr_value(t: AttributeType, v: &str) -> Result<AttributeValue, Box<dyn
             AttributeType::Bool => AttributeValue::Bool(match v {
                 "TRUE" => true,
                 "FALSE" => false,
-                _ => bail!("Bad attribute value: {}", v)
-            })
+                _ => bail!("Bad attribute value: {}", v),
+            }),
         },
     })
 }
@@ -252,7 +254,7 @@ impl DeviceController for AprontestController {
                     let attribute_type = match m.name("type").unwrap().as_str() {
                         "UINT8" => AttributeType::UInt8,
                         "BOOL" => AttributeType::Bool,
-                        _ => bail!("Bad attribute type: {}", m.name("type").unwrap().as_str())
+                        _ => bail!("Bad attribute type: {}", m.name("type").unwrap().as_str()),
                     };
                     Ok(DeviceAttribute {
                         id: m.name("id").unwrap().as_str().parse()?,
@@ -260,8 +262,14 @@ impl DeviceController for AprontestController {
                         attribute_type,
                         supports_write: m.name("mode").unwrap().as_str().contains("W"),
                         supports_read: m.name("mode").unwrap().as_str().contains("R"),
-                        current_value: parse_attr_value(attribute_type, m.name("get").unwrap().as_str().trim())?,
-                        setting_value: parse_attr_value(attribute_type, m.name("set").unwrap().as_str().trim())?,
+                        current_value: parse_attr_value(
+                            attribute_type,
+                            m.name("get").unwrap().as_str().trim(),
+                        )?,
+                        setting_value: parse_attr_value(
+                            attribute_type,
+                            m.name("set").unwrap().as_str().trim(),
+                        )?,
                     })
                 })
                 .collect::<Result<Vec<DeviceAttribute>, Box<dyn Error>>>()?,
@@ -294,7 +302,7 @@ impl DeviceController for AprontestController {
 }
 
 pub struct FakeController {
-    attr_values : HashMap<(DeviceId, AttributeId), AttributeValue>
+    attr_values: HashMap<(DeviceId, AttributeId), AttributeValue>,
 }
 
 impl FakeController {
@@ -308,72 +316,94 @@ impl FakeController {
 impl DeviceController for FakeController {
     fn list(&self) -> Result<Vec<ShortDevice>, Box<dyn Error>> {
         Ok(vec![ShortDevice {
-                    id: 2,
-                    name: "Bedroom Fan".to_string()
-                }])
+            id: 2,
+            name: "Bedroom Fan".to_string(),
+        }])
     }
 
     fn describe(&self, master_id: u32) -> Result<LongDevice, Box<dyn Error>> {
         match master_id {
             2 => Ok(LongDevice {
-                    gang_id: Some(0x03),
-                    generic_device_type: Some(0x11),
-                    specific_device_type: Some(0x08),
-                    manufacturer_id: Some(0x63),
-                    product_type: Some(0x4944),
-                    product_number: Some(0x3131),
-                    id: 2,
-                    status: "ONLINE".to_string(),
-                    name: "Bedroom Fan".to_string(),
-                    attributes: vec![
-                        DeviceAttribute {
-                            id: 1,
-                            description: "GenericValue".to_string(),
-                            attribute_type: AttributeType::UInt8,
-                            supports_write: true,
-                            supports_read: true,
-                            current_value: *self.attr_values.get(&(master_id, 1 as AttributeId)).unwrap_or(&AttributeValue::UInt8(0)),
-                            setting_value: *self.attr_values.get(&(master_id, 1 as AttributeId)).unwrap_or(&AttributeValue::UInt8(0)),
-                        },
-                        DeviceAttribute {
-                            id: 3,
-                            description: "Level".to_string(),
-                            attribute_type: AttributeType::UInt8,
-                            supports_write: true,
-                            supports_read: true,
-                            current_value: *self.attr_values.get(&(master_id, 3 as AttributeId)).unwrap_or(&AttributeValue::UInt8(0)),
-                            setting_value: *self.attr_values.get(&(master_id, 3 as AttributeId)).unwrap_or(&AttributeValue::UInt8(0)),
-                        },
-                        DeviceAttribute {
-                            id: 4,
-                            description: "Up_Down".to_string(),
-                            attribute_type: AttributeType::Bool,
-                            supports_write: true,
-                            supports_read: false,
-                            current_value: AttributeValue::NoValue,
-                            setting_value: AttributeValue::NoValue,
-                        },
-                        DeviceAttribute {
-                            id: 5,
-                            description: "StopMovement".to_string(),
-                            attribute_type: AttributeType::Bool,
-                            supports_write: true,
-                            supports_read: false,
-                            current_value: AttributeValue::NoValue,
-                            setting_value: AttributeValue::NoValue,
-                        }
-                    ]
-                }),
+                gang_id: Some(0x03),
+                generic_device_type: Some(0x11),
+                specific_device_type: Some(0x08),
+                manufacturer_id: Some(0x63),
+                product_type: Some(0x4944),
+                product_number: Some(0x3131),
+                id: 2,
+                status: "ONLINE".to_string(),
+                name: "Bedroom Fan".to_string(),
+                attributes: vec![
+                    DeviceAttribute {
+                        id: 1,
+                        description: "GenericValue".to_string(),
+                        attribute_type: AttributeType::UInt8,
+                        supports_write: true,
+                        supports_read: true,
+                        current_value: *self
+                            .attr_values
+                            .get(&(master_id, 1 as AttributeId))
+                            .unwrap_or(&AttributeValue::UInt8(0)),
+                        setting_value: *self
+                            .attr_values
+                            .get(&(master_id, 1 as AttributeId))
+                            .unwrap_or(&AttributeValue::UInt8(0)),
+                    },
+                    DeviceAttribute {
+                        id: 3,
+                        description: "Level".to_string(),
+                        attribute_type: AttributeType::UInt8,
+                        supports_write: true,
+                        supports_read: true,
+                        current_value: *self
+                            .attr_values
+                            .get(&(master_id, 3 as AttributeId))
+                            .unwrap_or(&AttributeValue::UInt8(0)),
+                        setting_value: *self
+                            .attr_values
+                            .get(&(master_id, 3 as AttributeId))
+                            .unwrap_or(&AttributeValue::UInt8(0)),
+                    },
+                    DeviceAttribute {
+                        id: 4,
+                        description: "Up_Down".to_string(),
+                        attribute_type: AttributeType::Bool,
+                        supports_write: true,
+                        supports_read: false,
+                        current_value: AttributeValue::NoValue,
+                        setting_value: AttributeValue::NoValue,
+                    },
+                    DeviceAttribute {
+                        id: 5,
+                        description: "StopMovement".to_string(),
+                        attribute_type: AttributeType::Bool,
+                        supports_write: true,
+                        supports_read: false,
+                        current_value: AttributeValue::NoValue,
+                        setting_value: AttributeValue::NoValue,
+                    },
+                ],
+            }),
 
-            _ => bail!("Device id {} not found", master_id)
+            _ => bail!("Device id {} not found", master_id),
         }
     }
 
-    fn set(&mut self, master_id: u32, attribute_id: u32, value: &AttributeValue) -> Result<(), Box<dyn Error>> {
-        if master_id != 2 || attribute_id < 1 || attribute_id > 5 || *value == AttributeValue::NoValue {
+    fn set(
+        &mut self,
+        master_id: u32,
+        attribute_id: u32,
+        value: &AttributeValue,
+    ) -> Result<(), Box<dyn Error>> {
+        if master_id != 2
+            || attribute_id < 1
+            || attribute_id > 5
+            || *value == AttributeValue::NoValue
+        {
             bail!("Invalid inputs: {}/{}", master_id, attribute_id)
         }
-        self.attr_values.insert((master_id, attribute_id), value.clone());
+        self.attr_values
+            .insert((master_id, attribute_id), value.clone());
         Ok(())
     }
 }
