@@ -18,7 +18,7 @@ You can configure more options by editing the `/opt/wink-mqtt-rs/config` file af
 
 ## Usage
 ```bash
-wink-mqtt-rs 0.1.0
+wink-mqtt-rs 0.1.1
 Mike Kaplinskiy <mike.kaplinskiy@gmail.com>
 wink hub v1 mqtt bridge
 
@@ -40,6 +40,9 @@ OPTIONS:
     -s <mqtt-uri>
             mqtt server to connect to. Should be of the form
             mqtt[s]://[username:password@]host:port/[?connection_options]
+    -i <resync-interval>
+            how frequently to check if the light changed state (e.g. via Wink or other external means) [default: 10000]
+
     -t <topic-prefix>
             Prefix for the mqtt topic used for device status/control [default: home/wink/]
 ```
