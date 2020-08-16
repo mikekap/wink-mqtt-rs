@@ -2,6 +2,8 @@
 
 This is a rust implementation of an MQTT daemon to run on the wink hub (1, not 2). This turns your wink hub into a mqtt "radio" that can control attached devices.
 
+This version also includes support for [home-assistant autodiscovery](https://www.home-assistant.io/docs/mqtt/discovery/) so you don't have to configure your devices by hand. 
+
 ## Installation
 
 First you need to have root on your wink hub. [This tutorial](todo) has instructions on how to root your hub.
