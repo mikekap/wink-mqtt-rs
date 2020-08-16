@@ -107,6 +107,12 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             .multiple(true)
             .takes_value(false)
             .about("verbosity level"))
+        .arg(Arg::with_name("resync-interval")
+            .short('i')
+            .required(false)
+            .takes_value(true)
+            .about("how frequently to check if the light changed state (e.g. via Wink or other external means)")
+            .default_value("10000"))
         .arg(Arg::with_name("mqtt-uri")
             .short('s')
             .required(true)
@@ -129,6 +135,10 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             .default_value("homeassistant/status"))
         .get_matches();
 
+    let resync_interval: u64 = matches
+        .value_of_t("resync-interval")
+        .unwrap_or_else(|e| e.exit());
+
     let _guard = init_logger(&matches);
 
     let options = init_mqtt_client(&matches)?;
@@ -141,6 +151,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
         matches.value_of("topic-prefix").unwrap(),
         matches.value_of("discovery-prefix"),
         matches.value_of("discovery-listen-topic"),
+        resync_interval,
         controller,
     )
     .await;
