@@ -49,15 +49,29 @@ OPTIONS:
             Prefix for the mqtt topic used for device status/control [default: home/wink/]
 ```
 
-The default setup in release/ will read these options from /opt/wink-mqtt-rs/config .
+The default setup above will read these options from `/opt/wink-mqtt-rs/config` . You can also see this by running `cargo +nightly run`.
+
+### MQTT Messages
+
+If you have a topic prefix of `home/wink/`, and a device id with `1` named `Fan`:
+ - You can *receive* messages on `home/wink/1/status` with the contents, in json:
+ ```json
+ {"On_Off": 0}
+ ```
+   The keys/values match the attributes that `aprontest` reports.
+ - You can *send* messages on `home/wink/1/set` with the same style json blob as above to set values on the attribute.
+ - You can *send* messages on `home/wink/1/7/set` with a value to set for a particular attribute. Note that the attribute id here is a integer as reported by `aprontest`. Prefer the above version in code that does not listen to MQTT Discovery.
+
+Messages on the discovery topic follow a format that works with home assistant MQTT discovery. For details, see [converter.rs](https://github.com/mikekap/wink-mqtt-rs/blob/master/src/converter.rs).
 
 ## Known Issues
  - Groups are not exposed.
- - This has only been test with Z-Wave devices. Somewhat unlikely to work with others.
-   This is very easy to fix, so please file issues with the output of `aprontest -l` and `aprontest -l -m <device_id>`.
- - Does not send device info to Home Assistant, even though the data exists.
+ - This has only been tested with Z-Wave devices. It may not work in other scenarios.
+   This is very easy to fix, so please file issues with the output of `aprontest -l` and `aprontest -l -m <device_id>` from your Wink!
+ - Does not send device details to Home Assistant, even though the data exists. PRs welcome!
  - `mqtts` support is untested.
  - Could be smarter about tailing log files (like wink-mqtt), but a resync every 10 seconds seems fine.
+ - Don't publish status if nothing changed. Easy fix, if necessary.
 
 ## Uninstalling
 To uninstall, run:
