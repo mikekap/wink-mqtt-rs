@@ -135,7 +135,9 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             .default_value("homeassistant/status"))
         .get_matches();
 
-    let resync_interval: u64 = matches.value_of_t("resync-interval").unwrap_or_else(|e| e.exit());
+    let resync_interval: u64 = matches
+        .value_of_t("resync-interval")
+        .unwrap_or_else(|e| e.exit());
 
     let _guard = init_logger(&matches);
 

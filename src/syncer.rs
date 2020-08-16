@@ -55,7 +55,9 @@ where
         tokio::task::spawn(async move { Self::run_mqtt(ptr, ev).await });
 
         let ptr_2 = ptr_clone.clone();
-        tokio::task::spawn(async move { Self::run_poller(ptr_2, resync_interval, repoll_rx).await });
+        tokio::task::spawn(
+            async move { Self::run_poller(ptr_2, resync_interval, repoll_rx).await },
+        );
 
         if ptr_clone.discovery_prefix.is_some() {
             let ptr_3 = ptr_clone.clone();
