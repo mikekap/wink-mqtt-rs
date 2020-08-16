@@ -141,6 +141,8 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
 
     let _guard = init_logger(&matches);
 
+    info!(slog_scope::logger(), "starting"; "version" => crate_version!());
+
     let options = init_mqtt_client(&matches)?;
     #[cfg(target_arch = "arm")]
     let controller = controller::AprontestController::new();
