@@ -277,10 +277,17 @@ where
 
     async fn run_mqtt(this: Arc<Self>, mut ev: EventLoop) -> () {
         loop {
-            let result = Self::loop_once(this.clone(), &mut ev).await;
-            if !result.is_ok() {
-                warn!(slog_scope::logger(), "loop_encountered_error"; "err" => format!("{}", result.unwrap_err()))
-            }
+            let should_delay = {
+                let result = Self::loop_once(this.clone(), &mut ev).await;
+                let is_ok = result.is_ok();
+                if !is_ok {
+                    warn!(slog_scope::logger(), "loop_encountered_error"; "err" => format!("{}", result.unwrap_err()));
+                };
+                !is_ok
+            };
+            if should_delay {
+                tokio::time::delay_for(Duration::from_millis(200)).await
+            };
         }
     }
 

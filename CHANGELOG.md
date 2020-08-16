@@ -1,5 +1,10 @@
 ## Next
 
+## 0.1.2
+ - Remove silly Dockerfile in bundle
+ - Add version to startup log
+ - Avoid burning the CPU if the MQTT server is unreachable
+
 ## 0.1.1
  - Add resync interval
  - Add some better log messages
