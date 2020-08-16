@@ -25,5 +25,6 @@ jobs:
         cargo +nightly fmt
         if [[ -n "$(git status --porcelain)" ]]; then
           echo "Your code is not formatted - please run cargo +nightly fmt";
+          git diff;
           exit 1;
         fi
