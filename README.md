@@ -6,7 +6,7 @@ This version also includes support for [home-assistant autodiscovery](https://ww
 
 ## Installation
 
-First you need to have root on your wink hub. [This tutorial](todo) has instructions on how to root your hub. If you, like me, don't want to buy a UART->USB dongle, you can use the UART port on a Raspberry PI (since both UARTs are 3.3V). This worked for me, but I make no guarantees otherwise.
+First you need to have root on your wink hub. [This tutorial](https://www.mattcarrier.com/post/hacking-the-winkhub-part-1/) has instructions on how to root your hub. If you, like me, don't want to buy a UART->USB dongle, you can use the UART port on a Raspberry PI (since both UARTs are 3.3V). This worked for me, but I make no guarantees otherwise.
 
 Once you have root on your hub, run the following command from your root shell:
 
