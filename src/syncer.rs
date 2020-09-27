@@ -39,7 +39,7 @@ where
     ) -> Arc<DeviceSyncer<T>> {
         info!(slog_scope::logger(), "opening_client"; "host" => options.broker_address().0, "port" => options.broker_address().1, "client_id" => &options.client_id());
         options.set_clean_session(true);
-        let ev = EventLoop::new(options, 100).await;
+        let ev = EventLoop::new(options, 100);
         let (repoll_sender, repoll_rx) = bounded(10);
         let syncer = DeviceSyncer {
             topic_prefix: topic_prefix.to_string(),
@@ -97,7 +97,7 @@ where
 
     fn report_async_result<X, E: std::fmt::Display>(type_: &str, r: Result<X, E>) {
         if !r.is_ok() {
-            warn!(slog_scope::logger(), "async_failure"; "type" => type_, "error" => format!("{}", r.err().unwrap()));
+            warn!(slog_scope::logger(), "async_failure"; "type" => type_, "error" => format!("{:?}", r.err().unwrap()));
         }
     }
 
@@ -249,7 +249,8 @@ where
         trace!(slog_scope::logger(), "mqtt_message"; "message" => format!("{:?}", &message));
 
         return match message {
-            Incoming::Connected => {
+            Incoming::Connect(_) => Ok(()),
+            Incoming::ConnAck(_) => {
                 this.do_subscribe().await?;
                 Ok(())
             }
@@ -281,7 +282,7 @@ where
                 let result = Self::loop_once(this.clone(), &mut ev).await;
                 let is_ok = result.is_ok();
                 if !is_ok {
-                    warn!(slog_scope::logger(), "loop_encountered_error"; "err" => format!("{}", result.unwrap_err()));
+                    warn!(slog_scope::logger(), "loop_encountered_error"; "err" => format!("{:?}", result.unwrap_err()));
                 };
                 !is_ok
             };
