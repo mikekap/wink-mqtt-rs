@@ -89,8 +89,9 @@ that mostly just pretends whatever you do to it succeeded.
 ### Running on the Wink
 Use `./release/build_release.sh` to build a ARM binary (requires docker). Then you can:
 ```bash
+ssh root@wink /etc/rc.d/init.d/wink-mqtt-rs stop
 scp target/armv5te-unknown-linux-musleabi/release/wink-mqtt-rs root@wink:/opt/wink-mqtt-rs/
-ssh root@wink-mqtt-rs /etc/rc.d/init.d/wink-mqtt-rs restart
+ssh root@wink /etc/rc.d/init.d/wink-mqtt-rs start
 ```
 
 ## License
