@@ -95,7 +95,7 @@ where
         Ok(())
     }
 
-    fn report_async_result<X, E: std::fmt::Display>(type_: &str, r: Result<X, E>) {
+    fn report_async_result<X, E: std::fmt::Debug>(type_: &str, r: Result<X, E>) {
         if !r.is_ok() {
             warn!(slog_scope::logger(), "async_failure"; "type" => type_, "error" => format!("{:?}", r.err().unwrap()));
         }
