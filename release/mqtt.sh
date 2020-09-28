@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
+export PATH="$PATH:/sbin:/bin:/usr/sbin:/usr/bin"
+
 case "${1}" in
   start)
     CMD=$(cat /opt/wink-mqtt-rs/config | xargs echo /opt/wink-mqtt-rs/wink-mqtt-rs)
