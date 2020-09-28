@@ -1,5 +1,8 @@
 ## Next
 
+## 0.1.3
+ - Report errors more readably better when things fail
+
 ## 0.1.2
  - Remove silly Dockerfile in bundle
  - Add version to startup log
