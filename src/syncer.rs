@@ -305,7 +305,13 @@ where
                         AttributeValue::Bool(b) => serde_json::Value::Bool(b),
                         AttributeValue::UInt8(i) => {
                             serde_json::Value::Number(serde_json::Number::from(i))
-                        }
+                        },
+                        AttributeValue::UInt16(i) => {
+                            serde_json::Value::Number(serde_json::Number::from(i))
+                        },
+                        AttributeValue::UInt32(i) => {
+                            serde_json::Value::Number(serde_json::Number::from(i))
+                        },
                         AttributeValue::String(s) => serde_json::Value::String(s),
                     },
                 )

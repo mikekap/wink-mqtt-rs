@@ -33,6 +33,8 @@ fn switch_to_discovery_payload(
 
     let (payload_on, payload_off) = match on_off.attribute_type {
         AttributeType::UInt8 => ("0", "255"),
+        AttributeType::UInt16 => ("0", "65535"),
+        AttributeType::UInt32 => ("0", "4294967295"),
         AttributeType::Bool => ("TRUE", "FALSE"),
         AttributeType::String => ("ON", "OFF"),
     };
@@ -57,8 +59,10 @@ fn dimmer_to_discovery_payload(
     device: &LongDevice,
 ) -> Result<AutodiscoveryMessage, Box<dyn Error>> {
     let level = device.attribute("Level").unwrap();
-    let scale = match level.attribute_type {
-        AttributeType::UInt8 => 255,
+    let scale: u32 = match level.attribute_type {
+        AttributeType::UInt8 => u8::max_value() as u32,
+        AttributeType::UInt16 => u16::max_value() as u32,
+        AttributeType::UInt32 => u32::max_value(),
         AttributeType::Bool => 1,
         AttributeType::String => {
             bail!("A string level type! Please report with `aprontest -l` output!")
