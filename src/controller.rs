@@ -51,7 +51,7 @@ impl AttributeType {
                     "false" | "0" | "no" | "off" => false,
                     _ => bail!("Bad boolean value: {}", payload_str),
                 })
-            },
+            }
         })
     }
 
@@ -661,7 +661,13 @@ New HA Dimmable Light
 
         let result = controller.describe(2).unwrap();
         assert_eq!(14, result.attributes.len());
-        assert_eq!(AttributeType::UInt32, result.attributes[result.attributes.len() - 2].attribute_type);
-        assert_eq!(AttributeValue::UInt32(33554952), result.attributes[result.attributes.len() - 2].current_value);
+        assert_eq!(
+            AttributeType::UInt32,
+            result.attributes[result.attributes.len() - 2].attribute_type
+        );
+        assert_eq!(
+            AttributeValue::UInt32(33554952),
+            result.attributes[result.attributes.len() - 2].current_value
+        );
     }
 }
