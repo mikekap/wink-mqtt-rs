@@ -16,11 +16,13 @@ use tokio::time::Duration;
 pub struct DeviceSyncer<T>
 where
     T: DeviceController,
+    T: Send,
+    T: Sync,
 {
     topic_prefix: String,
     discovery_prefix: Option<String>,
     discovery_listen_topic: Option<String>,
-    controller: Mutex<T>,
+    controller: T,
     sender: Sender<Request>,
     repoll: Sender<DeviceId>,
 }
@@ -28,6 +30,8 @@ where
 impl<T: 'static> DeviceSyncer<T>
 where
     T: DeviceController,
+    T: Send,
+    T: Sync,
 {
     pub async fn new(
         mut options: MqttOptions,
@@ -45,7 +49,7 @@ where
             topic_prefix: topic_prefix.to_string(),
             discovery_prefix: discovery_prefix.map(|x| x.to_string()),
             discovery_listen_topic: discovery_listen_topic.map(|x| x.to_string()),
-            controller: Mutex::new(controller),
+            controller,
             sender: ev.handle(),
             repoll: repoll_sender,
         };
@@ -117,7 +121,7 @@ where
         Ok(())
     }
 
-    fn process_one_control_message(&self, message: Publish) -> Result<(), Box<dyn Error>> {
+    fn process_one_control_message(&mut self, message: Publish) -> Result<(), Box<dyn Error>> {
         let path_components = message
             .topic
             .strip_prefix(&self.topic_prefix)
@@ -147,7 +151,7 @@ where
         payload: &[u8],
     ) -> Result<(), Box<dyn Error>> {
         let (device_name, attribute) = {
-            let info = self.controller.lock().unwrap().describe(device_id)?;
+            let info = self.controller.describe(device_id)?;
             (
                 info.name,
                 info.attributes
@@ -166,10 +170,7 @@ where
         let payload_str = std::str::from_utf8(payload)?;
         let value = attribute.attribute_type.parse(payload_str)?;
 
-        self.controller
-            .lock()
-            .unwrap()
-            .set(device_id, attribute_id, &value)?;
+        self.controller.set(device_id, attribute_id, &value)?;
         info!(slog_scope::logger(), "set"; "device_id" => device_id, "device" => &device_name, "attribute" => &attribute.description, "value" => format!("{:?}", value));
 
         self.repoll.try_send(device_id)?;
@@ -178,7 +179,7 @@ where
     }
 
     fn set_device_attributes_json(
-        &self,
+        &mut self,
         device_id: DeviceId,
         payload: &[u8],
     ) -> Result<(), Box<dyn Error>> {
@@ -190,7 +191,7 @@ where
             _ => bail!("Input to set not a map: {}", input),
         };
 
-        let mut controller = self.controller.lock().unwrap();
+        let controller = &mut self.controller;
 
         let (device_name, attribute_names) = {
             let info = controller.describe(device_id)?;
@@ -291,7 +292,7 @@ where
     }
 
     fn poll_device_(&self, device_id: DeviceId) -> Result<(), Box<dyn Error>> {
-        let device_info = { self.controller.lock().unwrap().describe(device_id)? };
+        let device_info = { self.controller.describe(device_id)? };
         let attributes = device_info
             .attributes
             .into_iter()
@@ -340,7 +341,7 @@ where
     async fn poll_all_(this: Arc<Self>) -> Result<(), Box<dyn Error>> {
         let that = this.clone();
         let all_devices = tokio::task::spawn_blocking(move || -> Result<_, SimpleError> {
-            match that.controller.lock().unwrap().list() {
+            match that.controller.list() {
                 Ok(v) => Ok(v),
                 Err(e) => bail!("{}", e),
             }
@@ -390,7 +391,7 @@ where
 
         let that = this.clone();
         let device = tokio::task::spawn_blocking(move || -> Result<LongDevice, SimpleError> {
-            match that.controller.lock().unwrap().describe(id) {
+            match that.controller.describe(id) {
                 Ok(v) => Ok(v),
                 Err(v) => bail!("{}", v),
             }
@@ -428,7 +429,7 @@ where
         let that = this.clone();
         let devices =
             tokio::task::spawn_blocking(move || -> Result<Vec<ShortDevice>, SimpleError> {
-                match that.controller.lock().unwrap().list() {
+                match that.controller.list() {
                     Ok(v) => Ok(v),
                     Err(v) => bail!("{}", v),
                 }
