@@ -1,5 +1,9 @@
 use crate::controller::{AttributeType, LongDevice};
 use serde_json::json;
+use simple_error::bail;
+use std::error::Error;
+
+use crate::utils::ResultExtensions;
 
 pub struct AutodiscoveryMessage {
     pub component: &'static str,
@@ -10,40 +14,58 @@ pub fn device_to_discovery_payload(
     topic_prefix: &str,
     device: &LongDevice,
 ) -> Option<AutodiscoveryMessage> {
-    if device.attribute("Up_Down").is_some() && device.attribute("Level").is_some() {
-        return Some(dimmer_to_discovery_payload(topic_prefix, device));
+    if device.attribute("Level").is_some() {
+        return dimmer_to_discovery_payload(topic_prefix, device)
+            .log_failing_result("dimmer_discovery_failed");
     }
     if device.attribute("On_Off").is_some() {
-        return Some(switch_to_discovery_payload(topic_prefix, device));
+        return switch_to_discovery_payload(topic_prefix, device)
+            .log_failing_result("switch_discovery_failed");
     }
     return None;
 }
 
-fn switch_to_discovery_payload(topic_prefix: &str, device: &LongDevice) -> AutodiscoveryMessage {
+fn switch_to_discovery_payload(
+    topic_prefix: &str,
+    device: &LongDevice,
+) -> Result<AutodiscoveryMessage, Box<dyn Error>> {
     let on_off = device.attribute("On_Off").unwrap();
-    AutodiscoveryMessage {
+
+    let (payload_on, payload_off) = match on_off.attribute_type {
+        AttributeType::UInt8 => ("0", "255"),
+        AttributeType::Bool => ("TRUE", "FALSE"),
+        AttributeType::String => ("ON", "OFF"),
+    };
+
+    Ok(AutodiscoveryMessage {
         component: "switch",
         discovery_info: json!({
             "platform": "mqtt",
             "unique_id": format!("{}/{}", topic_prefix, device.id),
             "name": device.name,
             "state_topic": format!("{}{}/status", topic_prefix, device.id),
-            "value_template": "{{ value_json.On_Off | lower }}",
+            "value_template": "{{ value_json.On_Off | upper }}",
             "command_topic": format!("{}{}/{}/set", topic_prefix, device.id, on_off.id),
-            "payload_on": "true",
-            "payload_off": "false",
+            "payload_on": payload_on,
+            "payload_off": payload_off,
         }),
-    }
+    })
 }
 
-fn dimmer_to_discovery_payload(topic_prefix: &str, device: &LongDevice) -> AutodiscoveryMessage {
+fn dimmer_to_discovery_payload(
+    topic_prefix: &str,
+    device: &LongDevice,
+) -> Result<AutodiscoveryMessage, Box<dyn Error>> {
     let level = device.attribute("Level").unwrap();
     let scale = match level.attribute_type {
         AttributeType::UInt8 => 255,
         AttributeType::Bool => 1,
+        AttributeType::String => {
+            bail!("A string level type! Please report with `aprontest -l` output!")
+        }
     };
 
-    AutodiscoveryMessage {
+    Ok(AutodiscoveryMessage {
         component: "light",
         discovery_info: json!({
             "platform": "mqtt",
@@ -60,5 +82,5 @@ fn dimmer_to_discovery_payload(topic_prefix: &str, device: &LongDevice) -> Autod
             "brightness_value_template": "{{value_json.Level}}",
             "brightness_scale": scale,
         }),
-    }
+    })
 }

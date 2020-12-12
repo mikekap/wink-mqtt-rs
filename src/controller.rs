@@ -22,13 +22,15 @@ pub struct ShortDevice {
 pub enum AttributeType {
     UInt8,
     Bool,
+    String,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AttributeValue {
     NoValue,
     UInt8(u8),
     Bool(bool),
+    String(String),
 }
 
 impl AttributeType {
@@ -36,6 +38,7 @@ impl AttributeType {
         let payload_str = s.trim();
         Ok(match self {
             AttributeType::UInt8 => AttributeValue::UInt8(payload_str.parse::<u8>()?),
+            AttributeType::String => AttributeValue::String(payload_str.to_string()),
             AttributeType::Bool => {
                 AttributeValue::Bool(match payload_str.to_ascii_lowercase().as_str() {
                     "true" | "1" | "yes" | "on" => true,
@@ -141,7 +144,7 @@ lazy_static! {
     static ref ATTRIBUTE_REGEX_STR: String = r"\s*(?P<id>\d+)\s*\|\s*(?P<description>[^\|]+)\s*\|\s*(?P<type>[^ ]+)\s*\|\s*(?P<mode>[^ ]+)\s*\|\s*(?P<get>[^ ]*)\s*\| *(?P<set>[^\n ]*)".to_owned();
     static ref LONG_DEVICE_REGEX : Regex = Regex::new(&((
     "".to_owned() +
-    r"(?ms)Gang ID: (?P<gang_id>(0x)?[0-9a-fA-F]+)\n" +
+    r"(?ms)(?:Gang ID: (?P<gang_id>(0x)?[0-9a-fA-F]+)\n)?" +
     // r"(?:[^\n]+\n)*" +
     r"(?:Generic/Specific device types: (?P<generic_device_type>(0x)?[0-9a-fA-F]+)/(?P<specific_device_type>(0x)?[0-9a-fA-F]+)\n)?" +
     // r"(?:[^\n]+\n)*" +
@@ -185,6 +188,7 @@ fn parse_attr_value(t: AttributeType, v: &str) -> Result<AttributeValue, Box<dyn
                 "FALSE" => false,
                 _ => bail!("Bad attribute value: {}", v),
             }),
+            AttributeType::String => AttributeValue::String(v.to_string()),
         },
     })
 }
@@ -254,6 +258,7 @@ impl DeviceController for AprontestController {
                     let attribute_type = match m.name("type").unwrap().as_str() {
                         "UINT8" => AttributeType::UInt8,
                         "BOOL" => AttributeType::Bool,
+                        "STRING" => AttributeType::String,
                         _ => bail!("Bad attribute type: {}", m.name("type").unwrap().as_str()),
                     };
                     Ok(DeviceAttribute {
@@ -286,6 +291,7 @@ impl DeviceController for AprontestController {
             AttributeValue::NoValue => bail!("Invalid attribute value: none"),
             AttributeValue::UInt8(v) => format!("{}", v),
             AttributeValue::Bool(v) => if *v { "TRUE" } else { "FALSE" }.to_string(),
+            AttributeValue::String(v) => v.clone(),
         };
         (self.runner)(&[
             "aprontest",
@@ -340,14 +346,16 @@ impl DeviceController for FakeController {
                         attribute_type: AttributeType::UInt8,
                         supports_write: true,
                         supports_read: true,
-                        current_value: *self
+                        current_value: self
                             .attr_values
                             .get(&(master_id, 1 as AttributeId))
-                            .unwrap_or(&AttributeValue::UInt8(0)),
-                        setting_value: *self
+                            .unwrap_or(&AttributeValue::UInt8(0))
+                            .clone(),
+                        setting_value: self
                             .attr_values
                             .get(&(master_id, 1 as AttributeId))
-                            .unwrap_or(&AttributeValue::UInt8(0)),
+                            .unwrap_or(&AttributeValue::UInt8(0))
+                            .clone(),
                     },
                     DeviceAttribute {
                         id: 3,
@@ -355,14 +363,16 @@ impl DeviceController for FakeController {
                         attribute_type: AttributeType::UInt8,
                         supports_write: true,
                         supports_read: true,
-                        current_value: *self
+                        current_value: self
                             .attr_values
                             .get(&(master_id, 3 as AttributeId))
-                            .unwrap_or(&AttributeValue::UInt8(0)),
-                        setting_value: *self
+                            .unwrap_or(&AttributeValue::UInt8(0))
+                            .clone(),
+                        setting_value: self
                             .attr_values
                             .get(&(master_id, 3 as AttributeId))
-                            .unwrap_or(&AttributeValue::UInt8(0)),
+                            .unwrap_or(&AttributeValue::UInt8(0))
+                            .clone(),
                     },
                     DeviceAttribute {
                         id: 4,
@@ -514,6 +524,94 @@ Bedroom Fan
                         current_value: AttributeValue::NoValue,
                         setting_value: AttributeValue::NoValue,
                     }
+                ]
+            },
+            controller.describe(2).unwrap()
+        )
+    }
+
+    const TEST_OLD_LIST_STRING: &str = r###"
+Found 4 devices in database...
+MASTERID |     INTERCONNECT |                         USERNAME
+       1 |           ZIGBEE |                         LV_Lamp1
+       2 |           ZIGBEE |                         LV_Lamp2
+       3 |           ZIGBEE |                      Fireplace-L
+       4 |           ZIGBEE |                      Fireplace-R
+"###;
+
+    #[test]
+    fn older_list() {
+        let controller = AprontestController {
+            runner: |_| Ok(TEST_OLD_LIST_STRING.to_string()),
+        };
+
+        assert_eq!(
+            vec![
+                ShortDevice {
+                    id: 1,
+                    name: "LV_Lamp1".to_string()
+                },
+                ShortDevice {
+                    id: 2,
+                    name: "LV_Lamp2".to_string()
+                },
+                ShortDevice {
+                    id: 3,
+                    name: "Fireplace-L".to_string()
+                },
+                ShortDevice {
+                    id: 4,
+                    name: "Fireplace-R".to_string()
+                }
+            ],
+            controller.list().unwrap()
+        )
+    }
+
+    const TEST_OLD_DESCRIBE_STRING: &str = r###"
+Device has 2 attributes...
+LV_Lamp1
+ATTRIBUTE |               DESCRIPTION |   TYPE | MODE |          GET |     SET
+        1 |                    On_Off | STRING |  R/W |           ON |      ON
+        2 |                     Level |  UINT8 |  R/W |            0 |       0
+"###;
+
+    #[test]
+    fn old_describe() {
+        let controller = AprontestController {
+            runner: |_| Ok(TEST_OLD_DESCRIBE_STRING.to_string()),
+        };
+
+        assert_eq!(
+            LongDevice {
+                gang_id: None,
+                generic_device_type: None,
+                specific_device_type: None,
+                manufacturer_id: None,
+                product_type: None,
+                product_number: None,
+                id: 2,
+                status: "".to_string(),
+                name: "LV_Lamp1".to_string(),
+                attributes: vec![
+                    DeviceAttribute {
+                        id: 1,
+                        description: "On_Off".to_string(),
+                        attribute_type: AttributeType::String,
+                        supports_write: true,
+                        supports_read: true,
+                        current_value: AttributeValue::String("ON".to_string()),
+                        setting_value: AttributeValue::String("ON".to_string()),
+                    },
+                    DeviceAttribute {
+                        id: 2,
+                        description: "Level".to_string(),
+                        attribute_type: AttributeType::UInt8,
+                        supports_write: true,
+                        supports_read: true,
+                        current_value: AttributeValue::UInt8(0),
+                        setting_value: AttributeValue::UInt8(0),
+                    },
                 ]
             },
             controller.describe(2).unwrap()

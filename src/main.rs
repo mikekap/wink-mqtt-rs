@@ -20,6 +20,7 @@ use url::Url;
 mod controller;
 mod converter;
 mod syncer;
+mod utils;
 
 fn init_logger(args: &ArgMatches) -> GlobalLoggerGuard {
     let min_log_level = match args.occurrences_of("verbose") {

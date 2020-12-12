@@ -306,6 +306,7 @@ where
                         AttributeValue::UInt8(i) => {
                             serde_json::Value::Number(serde_json::Number::from(i))
                         }
+                        AttributeValue::String(s) => serde_json::Value::String(s),
                     },
                 )
             })
