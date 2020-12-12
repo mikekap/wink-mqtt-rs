@@ -1,6 +1,5 @@
 use slog::warn;
 use slog_scope;
-use std::error::Error;
 
 pub(crate) trait ResultExtensions<T, E> {
     fn log_failing_result(self, message: &str) -> Option<T>;
