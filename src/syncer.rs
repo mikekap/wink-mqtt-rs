@@ -3,7 +3,7 @@ use crate::controller::{
 };
 use crate::converter::device_to_discovery_payload;
 use async_channel::{bounded, Receiver, Sender};
-use rumqttc::{EventLoop, Incoming, MqttOptions, Publish, Request, Subscribe};
+use rumqttc::{EventLoop, Incoming, MqttOptions, Publish, Request, Subscribe, Event};
 use serde_json::value::Value::Object;
 use simple_error::{bail, SimpleError};
 use slog::{debug, error, info, trace, warn};
@@ -239,13 +239,11 @@ where
     }
 
     async fn loop_once(this: Arc<Self>, ev: &mut EventLoop) -> Result<(), Box<dyn Error>> {
-        let (message, _) = ev.poll().await?;
+        let message = match ev.poll().await? {
+            Event::Incoming(i) => i,
+            Event::Outgoing(_) => { return Ok(()) },
+        };
 
-        if message.is_none() {
-            return Ok(());
-        }
-
-        let message = message.unwrap();
         trace!(slog_scope::logger(), "mqtt_message"; "message" => format!("{:?}", &message));
 
         return match message {
@@ -326,7 +324,7 @@ where
             rumqttc::QoS::AtLeastOnce,
             payload,
         );
-        publish.set_retain(true);
+        publish.retain = true;
         self.sender.try_send(Request::Publish(publish))?;
 
         Ok(())
