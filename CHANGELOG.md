@@ -1,4 +1,7 @@
 ## Next
+ - Add support for older version of firmware that doesn't report Gang data.
+ - Add support for STRING-based properties & discovery of STRING-based On_Off switches.
+ - Add support for UInt16/32-based properties in parsing.
 
 ## 0.1.3
  - Report errors more readably better when things fail
