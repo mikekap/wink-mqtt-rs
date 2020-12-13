@@ -6,13 +6,13 @@ use std::str::FromStr;
 
 use regex::Regex;
 use simple_error::{bail, SimpleError};
+use slog::debug;
+use slog_scope;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use tokio::process::Command;
 use tokio::sync::Mutex;
-use slog::{debug};
-use slog_scope;
 
 pub type AttributeId = u32;
 pub type DeviceId = u32;

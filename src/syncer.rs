@@ -12,8 +12,7 @@ use std::error::Error;
 use std::sync::Arc;
 use tokio::time::Duration;
 
-pub struct DeviceSyncer
-{
+pub struct DeviceSyncer {
     topic_prefix: String,
     discovery_prefix: Option<String>,
     discovery_listen_topic: Option<String>,
@@ -22,8 +21,7 @@ pub struct DeviceSyncer
     repoll: Sender<DeviceId>,
 }
 
-impl<'a> DeviceSyncer
-{
+impl<'a> DeviceSyncer {
     pub fn new(
         mut options: MqttOptions,
         topic_prefix: &str,
@@ -48,8 +46,8 @@ impl<'a> DeviceSyncer
         trace!(slog_scope::logger(), "start_thread");
         tokio::task::spawn({
             let this = this.clone();
-            async move { this.run_mqtt(ev).await }}
-        );
+            async move { this.run_mqtt(ev).await }
+        });
 
         tokio::task::spawn({
             let this = this.clone();
@@ -343,9 +341,7 @@ impl<'a> DeviceSyncer
     }
 
     async fn poll_all(self: Arc<Self>) -> () {
-        self.poll_all_()
-            .await
-            .log_failing_result("poll_all_failed");
+        self.poll_all_().await.log_failing_result("poll_all_failed");
     }
 
     async fn run_poller(self: Arc<Self>, resync_interval: u64, rx: Receiver<DeviceId>) -> () {

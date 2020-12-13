@@ -14,9 +14,9 @@ use simple_error::bail;
 use slog::{info, o, trace, Drain};
 use slog_scope::GlobalLoggerGuard;
 use slog_term;
+use std::sync::Arc;
 use tokio::{self, time::Duration};
 use url::Url;
-use std::sync::Arc;
 
 mod controller;
 mod converter;
