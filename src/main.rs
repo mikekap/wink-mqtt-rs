@@ -9,6 +9,7 @@ use std::fs;
 use std::io::{BufReader, Read};
 
 use crate::config::Config;
+use crate::http::HttpServer;
 use clap::{crate_version, App, Arg, ArgMatches, ErrorKind};
 use rumqttc::MqttOptions;
 use simple_error::bail;
@@ -18,14 +19,13 @@ use slog_term;
 use std::sync::Arc;
 use tokio::{self, time::Duration};
 use url::Url;
-use crate::http::HttpServer;
 
 mod config;
 mod controller;
 mod converter;
+mod http;
 mod syncer;
 mod utils;
-mod http;
 
 fn init_logger(args: &ArgMatches) -> GlobalLoggerGuard {
     let min_log_level = match args.occurrences_of("verbose") {
@@ -51,7 +51,7 @@ fn init_logger(args: &ArgMatches) -> GlobalLoggerGuard {
 fn init_mqtt_client(a: &ArgMatches) -> Result<Option<MqttOptions>, Box<dyn Error>> {
     let mqtt_uri = match a.value_of("mqtt-uri") {
         Some(v) => v,
-        None => return Ok(None)
+        None => return Ok(None),
     };
     trace!(slog_scope::logger(), "parse_uri"; "uri" => mqtt_uri);
     let mqtt_uri = if !mqtt_uri.starts_with("mqtt://") && !mqtt_uri.starts_with("mqtts://") {
@@ -157,7 +157,13 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     let http_port = matches
         .value_of_t::<u16>("http-port")
         .map(|t| Some(t))
-        .unwrap_or_else(|e| if e.kind == ErrorKind::ArgumentNotFound { None } else { e.exit() });
+        .unwrap_or_else(|e| {
+            if e.kind == ErrorKind::ArgumentNotFound {
+                None
+            } else {
+                e.exit()
+            }
+        });
 
     let _guard = init_logger(&matches);
 
@@ -178,7 +184,11 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     let controller = controller::FakeController::new();
     let controller = Arc::new(controller);
 
-    let _syncer = if config.has_mqtt() { Some(syncer::DeviceSyncer::new(&config, controller.clone())) } else { None };
+    let _syncer = if config.has_mqtt() {
+        Some(syncer::DeviceSyncer::new(&config, controller.clone()))
+    } else {
+        None
+    };
     let _http = if http_port.is_some() {
         Some(HttpServer::new(&config, controller.clone()))
     } else {
