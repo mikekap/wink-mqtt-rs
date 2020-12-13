@@ -298,20 +298,7 @@ where
             .map(|x| {
                 (
                     x.description,
-                    match x.setting_value.or(&x.current_value) {
-                        AttributeValue::NoValue => serde_json::Value::Null,
-                        AttributeValue::Bool(b) => serde_json::Value::Bool(b),
-                        AttributeValue::UInt8(i) => {
-                            serde_json::Value::Number(serde_json::Number::from(i))
-                        }
-                        AttributeValue::UInt16(i) => {
-                            serde_json::Value::Number(serde_json::Number::from(i))
-                        }
-                        AttributeValue::UInt32(i) => {
-                            serde_json::Value::Number(serde_json::Number::from(i))
-                        }
-                        AttributeValue::String(s) => serde_json::Value::String(s),
-                    },
+                    x.setting_value.or(&x.current_value).to_json(),
                 )
             })
             .collect::<serde_json::Map<_, _>>();
