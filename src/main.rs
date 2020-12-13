@@ -14,6 +14,7 @@ use simple_error::bail;
 use slog::{info, o, trace, Drain};
 use slog_scope::GlobalLoggerGuard;
 use slog_term;
+use std::sync::Arc;
 use tokio::{self, time::Duration};
 use url::Url;
 
@@ -149,15 +150,15 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     let controller = controller::AprontestController::new();
     #[cfg(not(target_arch = "arm"))]
     let controller = controller::FakeController::new();
+    let controller = Arc::new(controller);
     let _ = syncer::DeviceSyncer::new(
         options,
         matches.value_of("topic-prefix").unwrap(),
         matches.value_of("discovery-prefix"),
         matches.value_of("discovery-listen-topic"),
         resync_interval,
-        controller,
-    )
-    .await;
+        controller.clone(),
+    );
     loop {
         tokio::time::delay_for(Duration::from_secs(0xfffff)).await;
     }
