@@ -64,10 +64,8 @@ impl AttributeType {
         Ok(match (s, self) {
             (serde_json::Value::String(s), AttributeType::String) => {
                 AttributeValue::String(s.clone())
-            },
-            (v, AttributeType::String) => {
-                AttributeValue::String(v.to_string())
             }
+            (v, AttributeType::String) => AttributeValue::String(v.to_string()),
             (serde_json::Value::Number(n), AttributeType::UInt8) => AttributeValue::UInt8(
                 n.as_u64()
                     .ok_or_else(|| simple_error!("{} is not a u64", n))?
@@ -86,7 +84,7 @@ impl AttributeType {
             (serde_json::Value::Bool(v), AttributeType::Bool) => AttributeValue::Bool(*v),
             (v, _) => {
                 bail!("unknown value for type {:?}: {}", self, v);
-            },
+            }
         })
     }
 }
@@ -115,15 +113,9 @@ impl AttributeValue {
         match self {
             AttributeValue::NoValue => serde_json::Value::Null,
             AttributeValue::Bool(b) => serde_json::Value::Bool(*b),
-            AttributeValue::UInt8(i) => {
-                serde_json::Value::Number(serde_json::Number::from(*i))
-            }
-            AttributeValue::UInt16(i) => {
-                serde_json::Value::Number(serde_json::Number::from(*i))
-            }
-            AttributeValue::UInt32(i) => {
-                serde_json::Value::Number(serde_json::Number::from(*i))
-            }
+            AttributeValue::UInt8(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
+            AttributeValue::UInt16(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
+            AttributeValue::UInt32(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
             AttributeValue::String(s) => serde_json::Value::String(s.clone()),
         }
     }
@@ -745,7 +737,17 @@ New HA Dimmable Light
             let atype = test.attribute_type().unwrap();
             let json_output = test.to_json();
             assert_eq!(test, &atype.parse_json(&json_output).unwrap());
-            assert_eq!(test, &atype.parse(&json_output.as_str().map(String::from).unwrap_or_else(|| json_output.to_string())).unwrap());
+            assert_eq!(
+                test,
+                &atype
+                    .parse(
+                        &json_output
+                            .as_str()
+                            .map(String::from)
+                            .unwrap_or_else(|| json_output.to_string())
+                    )
+                    .unwrap()
+            );
         }
 
         assert_eq!(serde_json::Value::Null, AttributeValue::NoValue.to_json());
