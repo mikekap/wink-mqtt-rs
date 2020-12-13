@@ -103,11 +103,11 @@ impl AttributeValue {
         }
     }
 
-    pub fn or(&self, other: &AttributeValue) -> AttributeValue {
+    pub fn or<'a>(&'a self, other: &'a AttributeValue) -> &'a AttributeValue {
         if *self == AttributeValue::NoValue {
-            return other.clone();
+            other
         } else {
-            return self.clone();
+            self
         }
     }
 
