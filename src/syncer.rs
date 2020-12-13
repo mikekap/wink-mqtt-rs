@@ -1,5 +1,5 @@
 use crate::config::{Config, NotInterestingTopicError, TopicType};
-use crate::controller::{AttributeId, AttributeValue, DeviceController, DeviceId};
+use crate::controller::{AttributeId, DeviceController, DeviceId};
 use crate::converter::device_to_discovery_payload;
 use crate::utils::ResultExtensions;
 use async_channel::{bounded, Receiver, Sender};
