@@ -212,7 +212,7 @@ mod tests {
     #[test]
     fn full_config() {
         let config = Config::new(
-            Some(&MqttOptions::new("a", "localhost", 123)),
+            Some(MqttOptions::new("a", "localhost", 123)),
             Some("topic/prefix/"),
             Some("discovery/topic/prefix/"),
             Some("fire/discovery"),
