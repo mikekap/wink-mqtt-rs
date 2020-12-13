@@ -201,14 +201,14 @@ impl<'a> DeviceSyncer {
                     if !v.supports_write {
                         error!(
                             slog_scope::logger(),
-                            "Attribute {} does not support writes", v.description
+                            "read_only_attribute"; "attribute" => &v.description
                         );
                         continue;
                     }
                     v
                 }
                 _ => {
-                    error!(slog_scope::logger(), "Bad attribute name: {}", k);
+                    error!(slog_scope::logger(), "not_found_attribute"; "name" => &k);
                     continue;
                 }
             };
@@ -216,12 +216,12 @@ impl<'a> DeviceSyncer {
             let value = match attribute.attribute_type.parse_json(v) {
                 Ok(v) => v,
                 Err(e) => {
-                    error!(slog_scope::logger(), "bad_setting_for_attribute"; "attribute" => &attribute.description, "value" => format!("{}", v), "error" => format!("{}", e));
+                    error!(slog_scope::logger(), "bad_setting_for_attribute"; "attribute" => &attribute.description, "value" => %v, "error" => ?e);
                     continue;
                 }
             };
 
-            info!(slog_scope::logger(), "set"; "device_id" => device_id, "device" => &device_name, "attribute" => k, "value" => format!("{:?}", value));
+            info!(slog_scope::logger(), "set"; "device_id" => device_id, "device" => &device_name, "attribute" => k, "value" => ?value);
             controller.set(device_id, attribute.id, &value).await?
         }
 
@@ -236,7 +236,7 @@ impl<'a> DeviceSyncer {
             Event::Outgoing(_) => return Ok(()),
         };
 
-        trace!(slog_scope::logger(), "mqtt_message"; "message" => format!("{:?}", &message));
+        trace!(slog_scope::logger(), "mqtt_message"; "message" => ?message);
 
         return match message {
             Incoming::Connect(_) => Ok(()),
@@ -270,11 +270,13 @@ impl<'a> DeviceSyncer {
         loop {
             let should_delay = {
                 let result = self.clone().loop_once(&mut ev).await;
-                let is_ok = result.is_ok();
-                if !is_ok {
-                    warn!(slog_scope::logger(), "loop_encountered_error"; "err" => format!("{:?}", result.unwrap_err()));
-                };
-                !is_ok
+                match result {
+                    Ok(_) => false,
+                    Err(e) => {
+                        warn!(slog_scope::logger(), "loop_encountered_error"; "err" => ?e);
+                        true
+                    }
+                }
             };
             if should_delay {
                 tokio::time::delay_for(Duration::from_millis(200)).await
