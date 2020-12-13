@@ -1,5 +1,8 @@
 use slog::{crit, debug, error, info, trace, warn, Level};
 use slog_scope;
+use std::convert::TryFrom;
+use std::num::ParseIntError;
+use std::str::FromStr;
 
 pub(crate) trait ResultExtensions<T, E> {
     fn log_failing_result_at(self, level: Level, message: &str) -> Option<T>
@@ -41,6 +44,25 @@ impl<T, E: std::fmt::Debug> ResultExtensions<T, E> for Result<T, E> {
                 }
                 None
             }
+        }
+    }
+}
+
+pub trait Numberish {
+    fn parse_numberish<T: TryFrom<u64>>(&self) -> Result<T, ParseIntError>;
+}
+
+impl Numberish for str {
+    fn parse_numberish<T: TryFrom<u64>>(&self) -> Result<T, ParseIntError> {
+        let inu64 = if let Some(number) = self.strip_prefix("0x") {
+            u64::from_str_radix(number.trim_start_matches("0"), 16)?
+        } else {
+            self.parse()?
+        };
+
+        match T::try_from(inu64) {
+            Ok(v) => Ok(v),
+            Err(_) => Err(u8::from_str("257").unwrap_err()),
         }
     }
 }

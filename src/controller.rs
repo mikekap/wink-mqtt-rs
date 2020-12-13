@@ -1,9 +1,8 @@
 use async_trait::async_trait;
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 use std::error::Error;
-use std::num::ParseIntError;
-use std::str::FromStr;
 
+use crate::utils::Numberish;
 use regex::Regex;
 use simple_error::{bail, SimpleError};
 use slog::debug;
@@ -180,25 +179,6 @@ lazy_static! {
     r"(?P<attributes>(?:").to_owned() + &ATTRIBUTE_REGEX_STR + ")*)"
     )).unwrap();
     static ref ATTRIBUTE_REGEX : Regex = Regex::new(&ATTRIBUTE_REGEX_STR).unwrap();
-}
-
-trait Numberish {
-    fn parse_numberish<T: TryFrom<u64>>(&self) -> Result<T, ParseIntError>;
-}
-
-impl Numberish for str {
-    fn parse_numberish<T: TryFrom<u64>>(&self) -> Result<T, ParseIntError> {
-        let inu64 = if let Some(number) = self.strip_prefix("0x") {
-            u64::from_str_radix(number.trim_start_matches("0"), 16)?
-        } else {
-            self.parse()?
-        };
-
-        match T::try_from(inu64) {
-            Ok(v) => Ok(v),
-            Err(_) => Err(u8::from_str("257").unwrap_err()),
-        }
-    }
 }
 
 fn parse_attr_value(t: AttributeType, v: &str) -> Result<AttributeValue, Box<dyn Error>> {
