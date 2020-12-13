@@ -12,34 +12,26 @@ use std::error::Error;
 use std::sync::Arc;
 use tokio::time::Duration;
 
-pub struct DeviceSyncer<T>
-where
-    T: DeviceController,
-    T: Send,
-    T: Sync,
+pub struct DeviceSyncer
 {
     topic_prefix: String,
     discovery_prefix: Option<String>,
     discovery_listen_topic: Option<String>,
-    controller: T,
+    controller: Arc<dyn DeviceController>,
     sender: Sender<Request>,
     repoll: Sender<DeviceId>,
 }
 
-impl<T: 'static> DeviceSyncer<T>
-where
-    T: DeviceController,
-    T: Send,
-    T: Sync,
+impl<'a> DeviceSyncer
 {
-    pub async fn new(
+    pub fn new(
         mut options: MqttOptions,
         topic_prefix: &str,
         discovery_prefix: Option<&str>,
         discovery_listen_topic: Option<&str>,
         resync_interval: u64,
-        controller: T,
-    ) -> Arc<DeviceSyncer<T>> {
+        controller: Arc<dyn DeviceController>,
+    ) -> Arc<DeviceSyncer> {
         info!(slog_scope::logger(), "opening_client"; "host" => options.broker_address().0, "port" => options.broker_address().1, "client_id" => &options.client_id());
         options.set_clean_session(true);
         let ev = EventLoop::new(options, 100);
@@ -52,21 +44,25 @@ where
             sender: ev.handle(),
             repoll: repoll_sender,
         };
-        let ptr = Arc::new(syncer);
-        let ptr_clone = ptr.clone();
+        let this = Arc::new(syncer);
         trace!(slog_scope::logger(), "start_thread");
-        tokio::task::spawn(async move { Self::run_mqtt(ptr, ev).await });
-
-        let ptr_2 = ptr_clone.clone();
-        tokio::task::spawn(
-            async move { Self::run_poller(ptr_2, resync_interval, repoll_rx).await },
+        tokio::task::spawn({
+            let this = this.clone();
+            async move { this.run_mqtt(ev).await }}
         );
 
-        if ptr_clone.discovery_prefix.is_some() {
-            let ptr_3 = ptr_clone.clone();
-            tokio::task::spawn(async move { Self::broadcast_discovery(ptr_3).await });
+        tokio::task::spawn({
+            let this = this.clone();
+            async move { this.run_poller(resync_interval, repoll_rx).await }
+        });
+
+        if this.discovery_prefix.is_some() {
+            tokio::task::spawn({
+                let this = this.clone();
+                async move { this.broadcast_discovery().await }
+            });
         }
-        ptr_clone
+        this
     }
 
     async fn do_subscribe(&self) -> Result<(), Box<dyn Error>> {
@@ -98,17 +94,17 @@ where
         Ok(())
     }
 
-    async fn process_one(this: Arc<Self>, message: Publish) -> Result<(), Box<dyn Error>> {
-        if message.topic.starts_with(this.topic_prefix.as_str()) {
+    async fn process_one(self: Arc<Self>, message: Publish) -> Result<(), Box<dyn Error>> {
+        if message.topic.starts_with(self.topic_prefix.as_str()) {
             tokio::task::spawn(async move {
-                this.process_one_control_message(message)
+                self.process_one_control_message(message)
                     .await
                     .log_failing_result("set_failed")
             });
-        } else if this.discovery_listen_topic.is_some()
-            && message.topic == *this.discovery_listen_topic.as_ref().unwrap()
+        } else if self.discovery_listen_topic.is_some()
+            && message.topic == *self.discovery_listen_topic.as_ref().unwrap()
         {
-            tokio::task::spawn(async move { Self::broadcast_discovery(this).await });
+            tokio::task::spawn(async move { self.broadcast_discovery().await });
         } else {
             bail!("Unknown message topic: {}", message.topic)
         };
@@ -236,7 +232,7 @@ where
         Ok(())
     }
 
-    async fn loop_once(this: Arc<Self>, ev: &mut EventLoop) -> Result<(), Box<dyn Error>> {
+    async fn loop_once(self: Arc<Self>, ev: &mut EventLoop) -> Result<(), Box<dyn Error>> {
         let message = match ev.poll().await? {
             Event::Incoming(i) => i,
             Event::Outgoing(_) => return Ok(()),
@@ -247,11 +243,11 @@ where
         return match message {
             Incoming::Connect(_) => Ok(()),
             Incoming::ConnAck(_) => {
-                this.do_subscribe().await?;
+                self.do_subscribe().await?;
                 Ok(())
             }
             Incoming::Publish(message) => {
-                Self::process_one(this, message).await?;
+                self.process_one(message).await?;
                 Ok(())
             }
             Incoming::PubAck(_) => Ok(()),
@@ -272,10 +268,10 @@ where
         };
     }
 
-    async fn run_mqtt(this: Arc<Self>, mut ev: EventLoop) -> () {
+    async fn run_mqtt(self: Arc<Self>, mut ev: EventLoop) -> () {
         loop {
             let should_delay = {
-                let result = Self::loop_once(this.clone(), &mut ev).await;
+                let result = self.clone().loop_once(&mut ev).await;
                 let is_ok = result.is_ok();
                 if !is_ok {
                     warn!(slog_scope::logger(), "loop_encountered_error"; "err" => format!("{:?}", result.unwrap_err()));
@@ -328,18 +324,17 @@ where
         Ok(())
     }
 
-    async fn poll_device(this: Arc<Self>, device_id: DeviceId) -> () {
-        this.poll_device_(device_id)
+    async fn poll_device(self: Arc<Self>, device_id: DeviceId) -> () {
+        self.poll_device_(device_id)
             .await
             .log_failing_result("poll_device_failed");
     }
 
-    async fn poll_all_(this: Arc<Self>) -> Result<(), Box<dyn Error>> {
-        let that = this.clone();
-        let all_devices = that.controller.list().await?;
+    async fn poll_all_(self: Arc<Self>) -> Result<(), Box<dyn Error>> {
+        let all_devices = self.clone().controller.list().await?;
         let all_tasks = all_devices
             .into_iter()
-            .map(|x| Self::poll_device(this.clone(), x.id))
+            .map(|x| Self::poll_device(self.clone(), x.id))
             .collect::<Vec<_>>();
         for task in all_tasks {
             task.await
@@ -347,54 +342,55 @@ where
         Ok(())
     }
 
-    async fn poll_all(this: Arc<Self>) -> () {
-        Self::poll_all_(this)
+    async fn poll_all(self: Arc<Self>) -> () {
+        self.poll_all_()
             .await
             .log_failing_result("poll_all_failed");
     }
 
-    async fn run_poller(this: Arc<Self>, resync_interval: u64, rx: Receiver<DeviceId>) -> () {
-        let that = this.clone();
+    async fn run_poller(self: Arc<Self>, resync_interval: u64, rx: Receiver<DeviceId>) -> () {
         info!(slog_scope::logger(), "poller_starting"; "resync_interval" => resync_interval);
-        tokio::task::spawn(async move {
-            let mut timer = tokio::time::interval(Duration::from_millis(resync_interval));
-            loop {
-                timer.tick().await;
-                let _ = that.repoll.send(0).await;
+        tokio::task::spawn({
+            let that = self.clone();
+            async move {
+                let mut timer = tokio::time::interval(Duration::from_millis(resync_interval));
+                loop {
+                    timer.tick().await;
+                    let _ = that.repoll.send(0).await;
+                }
             }
         });
         loop {
             let device_id = rx.recv().await.unwrap();
             trace!(slog_scope::logger(), "requested_repoll"; "device_id" => device_id);
             if device_id == 0 {
-                Self::poll_all(this.clone()).await;
+                self.clone().poll_all().await;
             } else {
-                Self::poll_device(this.clone(), device_id).await;
+                self.clone().poll_device(device_id).await;
             }
         }
     }
 
     async fn broadcast_device_discovery(
-        this: Arc<Self>,
+        self: Arc<Self>,
         id: DeviceId,
     ) -> Result<(), Box<dyn Error>> {
         debug!(slog_scope::logger(), "broadcast_discovery"; "id" => id);
 
-        let that = this.clone();
-        let device = that.controller.describe(id).await?;
+        let device = self.clone().controller.describe(id).await?;
 
-        match device_to_discovery_payload(&this.topic_prefix, &device) {
+        match device_to_discovery_payload(&self.topic_prefix, &device) {
             Some(v) => {
                 let topic = format!(
                     "{}{}/wink_{}/config",
-                    this.discovery_prefix.as_ref().unwrap(),
+                    self.discovery_prefix.as_ref().unwrap(),
                     v.component,
                     device.id
                 );
                 let config = v.discovery_info.to_string();
                 info!(slog_scope::logger(), "discovered_device"; "id" => id, "name" => &device.name);
                 debug!(slog_scope::logger(), "broadcast_discovery_result"; "id" => id, "topic" => &topic, "config" => &config);
-                this.sender
+                self.sender
                     .send(Request::Publish(Publish::new(
                         topic,
                         rumqttc::QoS::AtLeastOnce,
@@ -410,12 +406,12 @@ where
         }
     }
 
-    async fn broadcast_discovery_(this: Arc<Self>) -> Result<(), Box<dyn Error>> {
-        let devices = this.controller.list().await?;
+    async fn broadcast_discovery_(self: Arc<Self>) -> Result<(), Box<dyn Error>> {
+        let devices = self.controller.list().await?;
 
         let futures = devices
             .into_iter()
-            .map(|d| Self::broadcast_device_discovery(this.clone(), d.id))
+            .map(|d| self.clone().broadcast_device_discovery(d.id))
             .collect::<Vec<_>>();
         for f in futures {
             f.await?;
@@ -423,8 +419,8 @@ where
         Ok(())
     }
 
-    async fn broadcast_discovery(this: Arc<Self>) -> () {
-        Self::broadcast_discovery_(this)
+    async fn broadcast_discovery(self: Arc<Self>) -> () {
+        self.broadcast_discovery_()
             .await
             .log_failing_result("broadcast_discovery_failed");
     }

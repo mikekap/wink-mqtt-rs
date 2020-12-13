@@ -16,6 +16,7 @@ use slog_scope::GlobalLoggerGuard;
 use slog_term;
 use tokio::{self, time::Duration};
 use url::Url;
+use std::sync::Arc;
 
 mod controller;
 mod converter;
@@ -149,15 +150,15 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     let controller = controller::AprontestController::new();
     #[cfg(not(target_arch = "arm"))]
     let controller = controller::FakeController::new();
+    let controller = Arc::new(controller);
     let _ = syncer::DeviceSyncer::new(
         options,
         matches.value_of("topic-prefix").unwrap(),
         matches.value_of("discovery-prefix"),
         matches.value_of("discovery-listen-topic"),
         resync_interval,
-        controller,
-    )
-    .await;
+        controller.clone(),
+    );
     loop {
         tokio::time::delay_for(Duration::from_secs(0xfffff)).await;
     }
