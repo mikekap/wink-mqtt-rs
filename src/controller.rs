@@ -11,6 +11,8 @@ use std::future::Future;
 use std::pin::Pin;
 use tokio::process::Command;
 use tokio::sync::Mutex;
+use slog::{debug};
+use slog_scope;
 
 pub type AttributeId = u32;
 pub type DeviceId = u32;
@@ -145,6 +147,7 @@ impl AprontestController {
         AprontestController {
             runner: Box::new(|cmd| {
                 Box::pin((async move || {
+                    debug!(slog_scope::logger(), "running_command"; "cmd" => cmd.join(" "));
                     let result = Command::new(cmd[0]).args(&cmd[1..]).output().await?;
                     if !result.status.success() {
                         bail!("Calling aprontest failed. Something went horribly wrong.\nCommand: {}\nStderr:\n{}", cmd.join(" "), std::str::from_utf8(&result.stderr)?)
