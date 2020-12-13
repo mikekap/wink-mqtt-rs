@@ -4,7 +4,7 @@ use std::error::Error;
 
 use crate::utils::Numberish;
 use regex::Regex;
-use simple_error::{bail, SimpleError};
+use simple_error::{bail, simple_error};
 use slog::debug;
 use slog_scope;
 use std::collections::HashMap;
@@ -61,26 +61,70 @@ impl AttributeType {
     }
 
     pub fn parse_json(&self, s: &serde_json::Value) -> Result<AttributeValue, Box<dyn Error>> {
-        Ok(match s {
-            serde_json::Value::Number(n) => AttributeValue::UInt8(
+        Ok(match (s, self) {
+            (serde_json::Value::String(s), AttributeType::String) => {
+                AttributeValue::String(s.clone())
+            },
+            (v, AttributeType::String) => {
+                AttributeValue::String(v.to_string())
+            }
+            (serde_json::Value::Number(n), AttributeType::UInt8) => AttributeValue::UInt8(
                 n.as_u64()
-                    .ok_or(SimpleError::new(format!("{} is not a u64", n)))?
+                    .ok_or_else(|| simple_error!("{} is not a u64", n))?
                     .try_into()?,
             ),
-            serde_json::Value::Bool(v) => AttributeValue::Bool(*v),
-            v => {
+            (serde_json::Value::Number(n), AttributeType::UInt16) => AttributeValue::UInt16(
+                n.as_u64()
+                    .ok_or_else(|| simple_error!("{} is not a u64", n))?
+                    .try_into()?,
+            ),
+            (serde_json::Value::Number(n), AttributeType::UInt32) => AttributeValue::UInt32(
+                n.as_u64()
+                    .ok_or_else(|| simple_error!("{} is not a u64", n))?
+                    .try_into()?,
+            ),
+            (serde_json::Value::Bool(v), AttributeType::Bool) => AttributeValue::Bool(*v),
+            (v, _) => {
                 bail!("unknown value for type {:?}: {}", self, v);
-            }
+            },
         })
     }
 }
 
 impl AttributeValue {
+    pub fn attribute_type(&self) -> Option<AttributeType> {
+        match self {
+            AttributeValue::NoValue => None,
+            AttributeValue::Bool(_) => Some(AttributeType::Bool),
+            AttributeValue::String(_) => Some(AttributeType::String),
+            AttributeValue::UInt8(_) => Some(AttributeType::UInt8),
+            AttributeValue::UInt16(_) => Some(AttributeType::UInt16),
+            AttributeValue::UInt32(_) => Some(AttributeType::UInt32),
+        }
+    }
+
     pub fn or(&self, other: &AttributeValue) -> AttributeValue {
         if *self == AttributeValue::NoValue {
             return other.clone();
         } else {
             return self.clone();
+        }
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            AttributeValue::NoValue => serde_json::Value::Null,
+            AttributeValue::Bool(b) => serde_json::Value::Bool(*b),
+            AttributeValue::UInt8(i) => {
+                serde_json::Value::Number(serde_json::Number::from(*i))
+            }
+            AttributeValue::UInt16(i) => {
+                serde_json::Value::Number(serde_json::Number::from(*i))
+            }
+            AttributeValue::UInt32(i) => {
+                serde_json::Value::Number(serde_json::Number::from(*i))
+            }
+            AttributeValue::String(s) => serde_json::Value::String(s.clone()),
         }
     }
 }
@@ -680,5 +724,30 @@ New HA Dimmable Light
             AttributeValue::UInt32(33554952),
             result.attributes[result.attributes.len() - 2].current_value
         );
+    }
+
+    #[tokio::test]
+    async fn test_json_serialization() {
+        let tests = [
+            AttributeValue::String("hi".into()),
+            AttributeValue::String("true".into()),
+            AttributeValue::String("false".into()),
+            AttributeValue::String("0".into()),
+            AttributeValue::String("".into()),
+            AttributeValue::Bool(true),
+            AttributeValue::Bool(false),
+            AttributeValue::UInt8(u8::max_value()),
+            AttributeValue::UInt16(u16::max_value()),
+            AttributeValue::UInt32(u32::max_value()),
+        ];
+
+        for test in tests.iter() {
+            let atype = test.attribute_type().unwrap();
+            let json_output = test.to_json();
+            assert_eq!(test, &atype.parse_json(&json_output).unwrap());
+            assert_eq!(test, &atype.parse(&json_output.as_str().map(String::from).unwrap_or_else(|| json_output.to_string())).unwrap());
+        }
+
+        assert_eq!(serde_json::Value::Null, AttributeValue::NoValue.to_json());
     }
 }
