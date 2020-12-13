@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use std::convert::{TryFrom, TryInto};
 use std::error::Error;
 use std::num::ParseIntError;
@@ -6,7 +7,10 @@ use std::str::FromStr;
 use regex::Regex;
 use simple_error::{bail, SimpleError};
 use std::collections::HashMap;
-use subprocess;
+use std::future::Future;
+use std::pin::Pin;
+use tokio::process::Command;
+use tokio::sync::Mutex;
 
 pub type AttributeId = u32;
 pub type DeviceId = u32;
@@ -113,11 +117,12 @@ impl LongDevice {
     }
 }
 
-pub trait DeviceController: Send {
-    fn list(&self) -> Result<Vec<ShortDevice>, Box<dyn Error>>;
-    fn describe(&self, master_id: DeviceId) -> Result<LongDevice, Box<dyn Error>>;
-    fn set(
-        &mut self,
+#[async_trait]
+pub trait DeviceController: Send + Sync {
+    async fn list(&self) -> Result<Vec<ShortDevice>, Box<dyn Error>>;
+    async fn describe(&self, master_id: DeviceId) -> Result<LongDevice, Box<dyn Error>>;
+    async fn set(
+        &self,
         master_id: DeviceId,
         attribute_id: AttributeId,
         value: &AttributeValue,
@@ -125,19 +130,28 @@ pub trait DeviceController: Send {
 }
 
 pub struct AprontestController {
-    runner: fn(command: &[&str]) -> Result<String, Box<dyn Error>>,
+    runner: Box<
+        dyn for<'a> Fn(
+                &'a [&str],
+            )
+                -> Pin<Box<dyn Future<Output = Result<String, Box<dyn Error>>> + 'a + Send>>
+            + Send
+            + Sync,
+    >,
 }
 
 impl AprontestController {
     pub fn new() -> AprontestController {
         AprontestController {
-            runner: |cmd| {
-                let result = subprocess::Exec::cmd(cmd[0]).args(&cmd[1..]).capture()?;
-                if !result.success() {
-                    bail!("Calling aprontest failed. Something went horribly wrong.\nCommand: {}\nStderr: {}", cmd.join(" "), result.stderr_str())
-                };
-                Ok(result.stdout_str())
-            },
+            runner: Box::new(|cmd| {
+                Box::pin((async move || {
+                    let result = Command::new(cmd[0]).args(&cmd[1..]).output().await?;
+                    if !result.status.success() {
+                        bail!("Calling aprontest failed. Something went horribly wrong.\nCommand: {}\nStderr:\n{}", cmd.join(" "), std::str::from_utf8(&result.stderr)?)
+                    };
+                    Ok(std::str::from_utf8(&result.stdout)?.to_string())
+                })())
+            }),
         }
     }
 }
@@ -201,9 +215,10 @@ fn parse_attr_value(t: AttributeType, v: &str) -> Result<AttributeValue, Box<dyn
     })
 }
 
+#[async_trait]
 impl DeviceController for AprontestController {
-    fn list(&self) -> Result<Vec<ShortDevice>, Box<dyn Error>> {
-        let stdout = (self.runner)(&["aprontest", "-l"])?;
+    async fn list(&self) -> Result<Vec<ShortDevice>, Box<dyn Error>> {
+        let stdout = (self.runner)(&["aprontest", "-l"]).await?;
         let devices = match LIST_REGEX.captures(&stdout) {
             Some(v) => v,
             _ => bail!("Output doesn't match regex:\n{}", stdout),
@@ -221,8 +236,8 @@ impl DeviceController for AprontestController {
             .collect())
     }
 
-    fn describe(&self, master_id: DeviceId) -> Result<LongDevice, Box<dyn Error>> {
-        let stdout = (self.runner)(&["aprontest", "-l", "-m", &format!("{}", master_id)])?;
+    async fn describe(&self, master_id: DeviceId) -> Result<LongDevice, Box<dyn Error>> {
+        let stdout = (self.runner)(&["aprontest", "-l", "-m", &format!("{}", master_id)]).await?;
 
         let parsed = match LONG_DEVICE_REGEX.captures(&stdout) {
             Some(v) => v,
@@ -291,8 +306,8 @@ impl DeviceController for AprontestController {
         })
     }
 
-    fn set(
-        &mut self,
+    async fn set(
+        &self,
         master_id: DeviceId,
         attribute_id: AttributeId,
         value: &AttributeValue,
@@ -314,32 +329,34 @@ impl DeviceController for AprontestController {
             &format!("{}", attribute_id),
             "-v",
             &value,
-        ])?;
+        ])
+        .await?;
         Ok(())
     }
 }
 
 pub struct FakeController {
-    attr_values: HashMap<(DeviceId, AttributeId), AttributeValue>,
+    attr_values: Mutex<HashMap<(DeviceId, AttributeId), AttributeValue>>,
 }
 
 impl FakeController {
     pub fn new() -> FakeController {
         FakeController {
-            attr_values: HashMap::new(),
+            attr_values: Mutex::new(HashMap::new()),
         }
     }
 }
 
+#[async_trait]
 impl DeviceController for FakeController {
-    fn list(&self) -> Result<Vec<ShortDevice>, Box<dyn Error>> {
+    async fn list(&self) -> Result<Vec<ShortDevice>, Box<dyn Error>> {
         Ok(vec![ShortDevice {
             id: 2,
             name: "Bedroom Fan".to_string(),
         }])
     }
 
-    fn describe(&self, master_id: u32) -> Result<LongDevice, Box<dyn Error>> {
+    async fn describe(&self, master_id: u32) -> Result<LongDevice, Box<dyn Error>> {
         match master_id {
             2 => Ok(LongDevice {
                 gang_id: Some(0x03),
@@ -360,11 +377,15 @@ impl DeviceController for FakeController {
                         supports_read: true,
                         current_value: self
                             .attr_values
+                            .lock()
+                            .await
                             .get(&(master_id, 1 as AttributeId))
                             .unwrap_or(&AttributeValue::UInt8(0))
                             .clone(),
                         setting_value: self
                             .attr_values
+                            .lock()
+                            .await
                             .get(&(master_id, 1 as AttributeId))
                             .unwrap_or(&AttributeValue::UInt8(0))
                             .clone(),
@@ -377,11 +398,15 @@ impl DeviceController for FakeController {
                         supports_read: true,
                         current_value: self
                             .attr_values
+                            .lock()
+                            .await
                             .get(&(master_id, 3 as AttributeId))
                             .unwrap_or(&AttributeValue::UInt8(0))
                             .clone(),
                         setting_value: self
                             .attr_values
+                            .lock()
+                            .await
                             .get(&(master_id, 3 as AttributeId))
                             .unwrap_or(&AttributeValue::UInt8(0))
                             .clone(),
@@ -411,8 +436,8 @@ impl DeviceController for FakeController {
         }
     }
 
-    fn set(
-        &mut self,
+    async fn set(
+        &self,
         master_id: u32,
         attribute_id: u32,
         value: &AttributeValue,
@@ -425,6 +450,8 @@ impl DeviceController for FakeController {
             bail!("Invalid inputs: {}/{}", master_id, attribute_id)
         }
         self.attr_values
+            .lock()
+            .await
             .insert((master_id, attribute_id), value.clone());
         Ok(())
     }
@@ -433,6 +460,7 @@ impl DeviceController for FakeController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     const TEST_LIST_STRING: &str = r###"
 Found 2 devices in database...
@@ -447,11 +475,19 @@ Found 0 control groups in database...
 GROUP ID |             NAME |            RADIO |
 "###;
 
-    #[test]
-    fn list() {
-        let controller = AprontestController {
-            runner: |_| Ok(TEST_LIST_STRING.to_string()),
-        };
+    fn controller_with_output(output: &str) -> AprontestController {
+        let output = Arc::new(output.to_string());
+        AprontestController {
+            runner: Box::new(move |_| {
+                let output = output.clone();
+                Box::pin((async move || Ok((*output).clone()))())
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn list() {
+        let controller = controller_with_output(TEST_LIST_STRING);
 
         assert_eq!(
             vec![
@@ -464,7 +500,7 @@ GROUP ID |             NAME |            RADIO |
                     name: "Bedroom Lights".to_string()
                 }
             ],
-            controller.list().unwrap()
+            controller.list().await.unwrap()
         )
     }
 
@@ -482,11 +518,9 @@ Bedroom Fan
            5 |                        StopMovement |   BOOL |    W |                                  |
 "###;
 
-    #[test]
-    fn describe() {
-        let controller = AprontestController {
-            runner: |_| Ok(TEST_DESCRIBE_STRING.to_string()),
-        };
+    #[tokio::test]
+    async fn describe() {
+        let controller = controller_with_output(TEST_DESCRIBE_STRING);
 
         assert_eq!(
             LongDevice {
@@ -538,7 +572,7 @@ Bedroom Fan
                     }
                 ]
             },
-            controller.describe(2).unwrap()
+            controller.describe(2).await.unwrap()
         )
     }
 
@@ -551,11 +585,9 @@ MASTERID |     INTERCONNECT |                         USERNAME
        4 |           ZIGBEE |                      Fireplace-R
 "###;
 
-    #[test]
-    fn older_list() {
-        let controller = AprontestController {
-            runner: |_| Ok(TEST_OLD_LIST_STRING.to_string()),
-        };
+    #[tokio::test]
+    async fn older_list() {
+        let controller = controller_with_output(TEST_OLD_LIST_STRING);
 
         assert_eq!(
             vec![
@@ -576,7 +608,7 @@ MASTERID |     INTERCONNECT |                         USERNAME
                     name: "Fireplace-R".to_string()
                 }
             ],
-            controller.list().unwrap()
+            controller.list().await.unwrap()
         )
     }
 
@@ -588,11 +620,9 @@ ATTRIBUTE |               DESCRIPTION |   TYPE | MODE |          GET |     SET
         2 |                     Level |  UINT8 |  R/W |            0 |       0
 "###;
 
-    #[test]
-    fn old_describe() {
-        let controller = AprontestController {
-            runner: |_| Ok(TEST_OLD_DESCRIBE_STRING.to_string()),
-        };
+    #[tokio::test]
+    async fn old_describe() {
+        let controller = controller_with_output(TEST_OLD_DESCRIBE_STRING);
 
         assert_eq!(
             LongDevice {
@@ -626,7 +656,7 @@ ATTRIBUTE |               DESCRIPTION |   TYPE | MODE |          GET |     SET
                     },
                 ]
             },
-            controller.describe(2).unwrap()
+            controller.describe(2).await.unwrap()
         )
     }
 
@@ -653,13 +683,11 @@ New HA Dimmable Light
   4294901760 |                   WK_TransitionTime | UINT16 |  R/W |                                  |
     "###;
 
-    #[test]
-    fn types_describe() {
-        let controller = AprontestController {
-            runner: |_| Ok(OTHER_TYPES_DESCRIBE.to_string()),
-        };
+    #[tokio::test]
+    async fn types_describe() {
+        let controller = controller_with_output(OTHER_TYPES_DESCRIBE);
 
-        let result = controller.describe(2).unwrap();
+        let result = controller.describe(2).await.unwrap();
         assert_eq!(14, result.attributes.len());
         assert_eq!(
             AttributeType::UInt32,

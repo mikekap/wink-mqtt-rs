@@ -1,7 +1,6 @@
-use crate::controller::{
-    AttributeId, AttributeValue, DeviceController, DeviceId, LongDevice, ShortDevice,
-};
+use crate::controller::{AttributeId, AttributeValue, DeviceController, DeviceId};
 use crate::converter::device_to_discovery_payload;
+use crate::utils::ResultExtensions;
 use async_channel::{bounded, Receiver, Sender};
 use rumqttc::{Event, EventLoop, Incoming, MqttOptions, Publish, Request, Subscribe};
 use serde_json::value::Value::Object;
@@ -10,7 +9,7 @@ use slog::{debug, error, info, trace, warn};
 use slog_scope;
 use std::collections::HashMap;
 use std::error::Error;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::time::Duration;
 
 pub struct DeviceSyncer<T>
@@ -99,21 +98,17 @@ where
         Ok(())
     }
 
-    fn report_async_result<X, E: std::fmt::Debug>(type_: &str, r: Result<X, E>) {
-        if !r.is_ok() {
-            warn!(slog_scope::logger(), "async_failure"; "type" => type_, "error" => format!("{:?}", r.err().unwrap()));
-        }
-    }
-
     async fn process_one(this: Arc<Self>, message: Publish) -> Result<(), Box<dyn Error>> {
         if message.topic.starts_with(this.topic_prefix.as_str()) {
-            tokio::task::spawn_blocking(move || {
-                Self::report_async_result("set", this.process_one_control_message(message))
-            })
+            tokio::task::spawn(async move {
+                this.process_one_control_message(message)
+                    .await
+                    .log_failing_result("set_failed")
+            });
         } else if this.discovery_listen_topic.is_some()
             && message.topic == *this.discovery_listen_topic.as_ref().unwrap()
         {
-            tokio::task::spawn(async move { Self::broadcast_discovery(this).await })
+            tokio::task::spawn(async move { Self::broadcast_discovery(this).await });
         } else {
             bail!("Unknown message topic: {}", message.topic)
         };
@@ -121,7 +116,7 @@ where
         Ok(())
     }
 
-    fn process_one_control_message(&mut self, message: Publish) -> Result<(), Box<dyn Error>> {
+    async fn process_one_control_message(&self, message: Publish) -> Result<(), Box<dyn Error>> {
         let path_components = message
             .topic
             .strip_prefix(&self.topic_prefix)
@@ -136,22 +131,24 @@ where
             .parse::<u64>()? as crate::controller::DeviceId;
         if let [_, rest] = path_components[..] {
             let attribute_id = rest.parse::<u64>()? as AttributeId;
-            self.set_device_attribute_by_id(device_id, attribute_id, &message.payload)?;
+            self.set_device_attribute_by_id(device_id, attribute_id, &message.payload)
+                .await?;
         } else {
-            self.set_device_attributes_json(device_id, &message.payload)?;
+            self.set_device_attributes_json(device_id, &message.payload)
+                .await?;
         };
 
         Ok(())
     }
 
-    fn set_device_attribute_by_id(
+    async fn set_device_attribute_by_id(
         &self,
         device_id: DeviceId,
         attribute_id: AttributeId,
         payload: &[u8],
     ) -> Result<(), Box<dyn Error>> {
         let (device_name, attribute) = {
-            let info = self.controller.describe(device_id)?;
+            let info = self.controller.describe(device_id).await?;
             (
                 info.name,
                 info.attributes
@@ -170,7 +167,7 @@ where
         let payload_str = std::str::from_utf8(payload)?;
         let value = attribute.attribute_type.parse(payload_str)?;
 
-        self.controller.set(device_id, attribute_id, &value)?;
+        self.controller.set(device_id, attribute_id, &value).await?;
         info!(slog_scope::logger(), "set"; "device_id" => device_id, "device" => &device_name, "attribute" => &attribute.description, "value" => format!("{:?}", value));
 
         self.repoll.try_send(device_id)?;
@@ -178,8 +175,8 @@ where
         Ok(())
     }
 
-    fn set_device_attributes_json(
-        &mut self,
+    async fn set_device_attributes_json(
+        &self,
         device_id: DeviceId,
         payload: &[u8],
     ) -> Result<(), Box<dyn Error>> {
@@ -191,10 +188,10 @@ where
             _ => bail!("Input to set not a map: {}", input),
         };
 
-        let controller = &mut self.controller;
+        let controller = &self.controller;
 
         let (device_name, attribute_names) = {
-            let info = controller.describe(device_id)?;
+            let info = controller.describe(device_id).await?;
             (
                 info.name,
                 info.attributes
@@ -231,7 +228,7 @@ where
             };
 
             info!(slog_scope::logger(), "set"; "device_id" => device_id, "device" => &device_name, "attribute" => k, "value" => format!("{:?}", value));
-            controller.set(device_id, attribute.id, &value)?
+            controller.set(device_id, attribute.id, &value).await?
         }
 
         self.repoll.try_send(device_id)?;
@@ -291,8 +288,8 @@ where
         }
     }
 
-    fn poll_device_(&self, device_id: DeviceId) -> Result<(), Box<dyn Error>> {
-        let device_info = { self.controller.describe(device_id)? };
+    async fn poll_device_(&self, device_id: DeviceId) -> Result<(), Box<dyn Error>> {
+        let device_info = { self.controller.describe(device_id).await? };
         let attributes = device_info
             .attributes
             .into_iter()
@@ -332,22 +329,14 @@ where
     }
 
     async fn poll_device(this: Arc<Self>, device_id: DeviceId) -> () {
-        let _ = tokio::task::spawn_blocking(move || {
-            Self::report_async_result("poll_device", this.poll_device_(device_id))
-        })
-        .await;
+        this.poll_device_(device_id)
+            .await
+            .log_failing_result("poll_device_failed");
     }
 
     async fn poll_all_(this: Arc<Self>) -> Result<(), Box<dyn Error>> {
         let that = this.clone();
-        let all_devices = tokio::task::spawn_blocking(move || -> Result<_, SimpleError> {
-            match that.controller.list() {
-                Ok(v) => Ok(v),
-                Err(e) => bail!("{}", e),
-            }
-        })
-        .await??;
-
+        let all_devices = that.controller.list().await?;
         let all_tasks = all_devices
             .into_iter()
             .map(|x| Self::poll_device(this.clone(), x.id))
@@ -359,7 +348,9 @@ where
     }
 
     async fn poll_all(this: Arc<Self>) -> () {
-        Self::report_async_result("poll_all", Self::poll_all_(this).await)
+        Self::poll_all_(this)
+            .await
+            .log_failing_result("poll_all_failed");
     }
 
     async fn run_poller(this: Arc<Self>, resync_interval: u64, rx: Receiver<DeviceId>) -> () {
@@ -390,13 +381,7 @@ where
         debug!(slog_scope::logger(), "broadcast_discovery"; "id" => id);
 
         let that = this.clone();
-        let device = tokio::task::spawn_blocking(move || -> Result<LongDevice, SimpleError> {
-            match that.controller.describe(id) {
-                Ok(v) => Ok(v),
-                Err(v) => bail!("{}", v),
-            }
-        })
-        .await??;
+        let device = that.controller.describe(id).await?;
 
         match device_to_discovery_payload(&this.topic_prefix, &device) {
             Some(v) => {
@@ -426,15 +411,7 @@ where
     }
 
     async fn broadcast_discovery_(this: Arc<Self>) -> Result<(), Box<dyn Error>> {
-        let that = this.clone();
-        let devices =
-            tokio::task::spawn_blocking(move || -> Result<Vec<ShortDevice>, SimpleError> {
-                match that.controller.list() {
-                    Ok(v) => Ok(v),
-                    Err(v) => bail!("{}", v),
-                }
-            })
-            .await??;
+        let devices = this.controller.list().await?;
 
         let futures = devices
             .into_iter()
@@ -447,9 +424,8 @@ where
     }
 
     async fn broadcast_discovery(this: Arc<Self>) -> () {
-        Self::report_async_result(
-            "broadcast_discovery",
-            Self::broadcast_discovery_(this).await,
-        )
+        Self::broadcast_discovery_(this)
+            .await
+            .log_failing_result("broadcast_discovery_failed");
     }
 }
