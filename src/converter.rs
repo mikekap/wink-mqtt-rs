@@ -1,8 +1,9 @@
 use crate::controller::{AttributeType, LongDevice};
 use serde_json::json;
-use simple_error::bail;
+use simple_error::{bail, simple_error};
 use std::error::Error;
 
+use crate::config::{Config, TopicType};
 use crate::utils::ResultExtensions;
 
 pub struct AutodiscoveryMessage {
@@ -11,22 +12,22 @@ pub struct AutodiscoveryMessage {
 }
 
 pub fn device_to_discovery_payload(
-    topic_prefix: &str,
+    config: &Config,
     device: &LongDevice,
 ) -> Option<AutodiscoveryMessage> {
     if device.attribute("Level").is_some() {
-        return dimmer_to_discovery_payload(topic_prefix, device)
+        return dimmer_to_discovery_payload(&config, device)
             .log_failing_result("dimmer_discovery_failed");
     }
     if device.attribute("On_Off").is_some() {
-        return switch_to_discovery_payload(topic_prefix, device)
+        return switch_to_discovery_payload(&config, device)
             .log_failing_result("switch_discovery_failed");
     }
     return None;
 }
 
 fn switch_to_discovery_payload(
-    topic_prefix: &str,
+    config: &Config,
     device: &LongDevice,
 ) -> Result<AutodiscoveryMessage, Box<dyn Error>> {
     let on_off = device.attribute("On_Off").unwrap();
@@ -39,15 +40,30 @@ fn switch_to_discovery_payload(
         AttributeType::String => ("ON", "OFF"),
     };
 
+    let unique_id = format!(
+        "{}/{}",
+        config
+            .topic_prefix
+            .as_ref()
+            .ok_or_else(|| simple_error!("No topic prefix defined"))?,
+        device.id
+    );
+    let state_topic = config
+        .to_topic_string(&TopicType::StatusTopic(device.id))
+        .unwrap();
+    let command_topic = config
+        .to_topic_string(&TopicType::SetAttributeTopic(device.id, on_off.id))
+        .unwrap();
+
     Ok(AutodiscoveryMessage {
         component: "switch",
         discovery_info: json!({
             "platform": "mqtt",
-            "unique_id": format!("{}/{}", topic_prefix, device.id),
+            "unique_id": unique_id,
             "name": device.name,
-            "state_topic": format!("{}{}/status", topic_prefix, device.id),
+            "state_topic": state_topic,
             "value_template": "{{ value_json.On_Off | upper }}",
-            "command_topic": format!("{}{}/{}/set", topic_prefix, device.id, on_off.id),
+            "command_topic": command_topic,
             "payload_on": payload_on,
             "payload_off": payload_off,
         }),
@@ -55,7 +71,7 @@ fn switch_to_discovery_payload(
 }
 
 fn dimmer_to_discovery_payload(
-    topic_prefix: &str,
+    config: &Config,
     device: &LongDevice,
 ) -> Result<AutodiscoveryMessage, Box<dyn Error>> {
     let level = device.attribute("Level").unwrap();
@@ -69,20 +85,35 @@ fn dimmer_to_discovery_payload(
         }
     };
 
+    let unique_id = format!(
+        "{}/{}",
+        config
+            .topic_prefix
+            .as_ref()
+            .ok_or_else(|| simple_error!("No topic prefix defined"))?,
+        device.id
+    );
+    let state_topic = config
+        .to_topic_string(&TopicType::StatusTopic(device.id))
+        .unwrap();
+    let command_topic = config
+        .to_topic_string(&TopicType::SetAttributeTopic(device.id, level.id))
+        .unwrap();
+
     Ok(AutodiscoveryMessage {
         component: "light",
         discovery_info: json!({
             "platform": "mqtt",
-            "unique_id": format!("{}/{}", topic_prefix, device.id),
+            "unique_id": unique_id,
             "name": device.name,
-            "state_topic": format!("{}{}/status", topic_prefix, device.id),
+            "state_topic": state_topic,
             "state_value_template": "{% if value_json.Level > 0 %}1{% else %}0{% endif %}",
-            "command_topic": format!("{}{}/{}/set", topic_prefix, device.id, level.id),
+            "command_topic": command_topic,
             "on_command_type": "brightness",
             "payload_off": "0",
             "payload_on": "1",
-            "brightness_state_topic": format!("{}{}/status", topic_prefix, device.id),
-            "brightness_command_topic": format!("{}{}/{}/set", topic_prefix, device.id, level.id),
+            "brightness_state_topic": state_topic,
+            "brightness_command_topic": command_topic,
             "brightness_value_template": "{{value_json.Level}}",
             "brightness_scale": scale,
         }),

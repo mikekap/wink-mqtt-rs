@@ -8,6 +8,7 @@ use std::error::Error;
 use std::fs;
 use std::io::{BufReader, Read};
 
+use crate::config::Config;
 use clap::{crate_version, App, Arg, ArgMatches};
 use rumqttc::MqttOptions;
 use simple_error::bail;
@@ -18,11 +19,11 @@ use std::sync::Arc;
 use tokio::{self, time::Duration};
 use url::Url;
 
+mod config;
 mod controller;
 mod converter;
 mod syncer;
 mod utils;
-mod config;
 
 fn init_logger(args: &ArgMatches) -> GlobalLoggerGuard {
     let min_log_level = match args.occurrences_of("verbose") {
@@ -147,19 +148,19 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     info!(slog_scope::logger(), "starting"; "version" => crate_version!());
 
     let options = init_mqtt_client(&matches)?;
+    let config = Config::new(
+        Some(&options),
+        matches.value_of("topic-prefix"),
+        matches.value_of("discovery-prefix"),
+        matches.value_of("discovery-listen-topic"),
+        resync_interval,
+    );
     #[cfg(target_arch = "arm")]
     let controller = controller::AprontestController::new();
     #[cfg(not(target_arch = "arm"))]
     let controller = controller::FakeController::new();
     let controller = Arc::new(controller);
-    let _ = syncer::DeviceSyncer::new(
-        options,
-        matches.value_of("topic-prefix").unwrap(),
-        matches.value_of("discovery-prefix"),
-        matches.value_of("discovery-listen-topic"),
-        resync_interval,
-        controller.clone(),
-    );
+    let _ = syncer::DeviceSyncer::new(&config, controller.clone());
     loop {
         tokio::time::delay_for(Duration::from_secs(0xfffff)).await;
     }

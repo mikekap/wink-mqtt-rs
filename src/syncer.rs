@@ -1,10 +1,11 @@
+use crate::config::{Config, NotInterestingTopicError, TopicType};
 use crate::controller::{AttributeId, AttributeValue, DeviceController, DeviceId};
 use crate::converter::device_to_discovery_payload;
 use crate::utils::ResultExtensions;
 use async_channel::{bounded, Receiver, Sender};
-use rumqttc::{Event, EventLoop, Incoming, MqttOptions, Publish, Request, Subscribe};
+use rumqttc::{Event, EventLoop, Incoming, Publish, Request, Subscribe};
 use serde_json::value::Value::Object;
-use simple_error::{bail, SimpleError};
+use simple_error::{bail, simple_error};
 use slog::{debug, error, info, trace, warn};
 use slog_scope;
 use std::collections::HashMap;
@@ -13,31 +14,21 @@ use std::sync::Arc;
 use tokio::time::Duration;
 
 pub struct DeviceSyncer {
-    topic_prefix: String,
-    discovery_prefix: Option<String>,
-    discovery_listen_topic: Option<String>,
+    config: Config,
     controller: Arc<dyn DeviceController>,
     sender: Sender<Request>,
     repoll: Sender<DeviceId>,
 }
 
 impl<'a> DeviceSyncer {
-    pub fn new(
-        mut options: MqttOptions,
-        topic_prefix: &str,
-        discovery_prefix: Option<&str>,
-        discovery_listen_topic: Option<&str>,
-        resync_interval: u64,
-        controller: Arc<dyn DeviceController>,
-    ) -> Arc<DeviceSyncer> {
+    pub fn new(config: &Config, controller: Arc<dyn DeviceController>) -> Arc<DeviceSyncer> {
+        let mut options = config.mqtt_options.as_ref().unwrap().clone();
         info!(slog_scope::logger(), "opening_client"; "host" => options.broker_address().0, "port" => options.broker_address().1, "client_id" => &options.client_id());
         options.set_clean_session(true);
         let ev = EventLoop::new(options, 100);
         let (repoll_sender, repoll_rx) = bounded(10);
         let syncer = DeviceSyncer {
-            topic_prefix: topic_prefix.to_string(),
-            discovery_prefix: discovery_prefix.map(|x| x.to_string()),
-            discovery_listen_topic: discovery_listen_topic.map(|x| x.to_string()),
+            config: config.clone(),
             controller,
             sender: ev.handle(),
             repoll: repoll_sender,
@@ -51,10 +42,14 @@ impl<'a> DeviceSyncer {
 
         tokio::task::spawn({
             let this = this.clone();
-            async move { this.run_poller(resync_interval, repoll_rx).await }
+            async move {
+                this.clone()
+                    .run_poller(this.clone().config.resync_interval, repoll_rx)
+                    .await
+            }
         });
 
-        if this.discovery_prefix.is_some() {
+        if this.config.discovery_topic_prefix.is_some() {
             tokio::task::spawn({
                 let this = this.clone();
                 async move { this.broadcast_discovery().await }
@@ -64,27 +59,18 @@ impl<'a> DeviceSyncer {
     }
 
     async fn do_subscribe(&self) -> Result<(), Box<dyn Error>> {
-        self.sender
-            .send(Request::Subscribe(Subscribe::new(
-                format!("{}+/set", &self.topic_prefix),
-                rumqttc::QoS::AtLeastOnce,
-            )))
-            .await?;
-
-        self.sender
-            .send(Request::Subscribe(Subscribe::new(
-                format!("{}+/+/set", &self.topic_prefix),
-                rumqttc::QoS::AtLeastOnce,
-            )))
-            .await?;
-
-        if let Some(topic) = &self.discovery_listen_topic {
-            self.sender
-                .send(Request::Subscribe(Subscribe::new(
+        let subscribed: Vec<_> = self
+            .config
+            .mqtt_topic_subscribe_patterns()
+            .map(|topic| {
+                self.sender.send(Request::Subscribe(Subscribe::new(
                     topic,
                     rumqttc::QoS::AtLeastOnce,
                 )))
-                .await?;
+            })
+            .collect();
+        for sub in subscribed {
+            sub.await?;
         }
 
         self.repoll.send(0).await?;
@@ -93,44 +79,37 @@ impl<'a> DeviceSyncer {
     }
 
     async fn process_one(self: Arc<Self>, message: Publish) -> Result<(), Box<dyn Error>> {
-        if message.topic.starts_with(self.topic_prefix.as_str()) {
-            tokio::task::spawn(async move {
-                self.process_one_control_message(message)
-                    .await
-                    .log_failing_result("set_failed")
-            });
-        } else if self.discovery_listen_topic.is_some()
-            && message.topic == *self.discovery_listen_topic.as_ref().unwrap()
-        {
-            tokio::task::spawn(async move { self.broadcast_discovery().await });
-        } else {
-            bail!("Unknown message topic: {}", message.topic)
+        let topic = {
+            let result = self.config.parse_mqtt_topic(&message.topic);
+
+            if result
+                .as_ref()
+                .err()
+                .and_then(|x| x.downcast_ref::<NotInterestingTopicError>())
+                .is_some()
+            {
+                return Ok(());
+            }
+            result?
         };
 
-        Ok(())
-    }
-
-    async fn process_one_control_message(&self, message: Publish) -> Result<(), Box<dyn Error>> {
-        let path_components = message
-            .topic
-            .strip_prefix(&self.topic_prefix)
-            .and_then(|v| v.strip_suffix("/set"))
-            .ok_or(SimpleError::new(format!("bad topic: {}", message.topic)))?
-            .split("/")
-            .collect::<Vec<_>>();
-
-        let device_id = path_components
-            .first()
-            .ok_or(SimpleError::new(format!("Bad topic: {}", message.topic)))?
-            .parse::<u64>()? as crate::controller::DeviceId;
-        if let [_, rest] = path_components[..] {
-            let attribute_id = rest.parse::<u64>()? as AttributeId;
-            self.set_device_attribute_by_id(device_id, attribute_id, &message.payload)
-                .await?;
-        } else {
-            self.set_device_attributes_json(device_id, &message.payload)
-                .await?;
-        };
+        match topic {
+            TopicType::SetJsonTopic(device_id) => {
+                self.set_device_attributes_json(device_id, &message.payload)
+                    .await?;
+            }
+            TopicType::SetAttributeTopic(device_id, attribute_id) => {
+                self.set_device_attribute_by_id(device_id, attribute_id, &message.payload)
+                    .await?;
+            }
+            TopicType::DiscoveryListenTopic() => {
+                self.broadcast_discovery_().await?;
+            }
+            TopicType::StatusTopic(_) | TopicType::DiscoveryTopic(_, _) => {
+                // Don't need to do anything here; we really shouldn't get here though...
+                warn!(slog_scope::logger(), "unexpected_topic_seen"; "topic" => message.topic);
+            }
+        }
 
         Ok(())
     }
@@ -148,10 +127,13 @@ impl<'a> DeviceSyncer {
                 info.attributes
                     .into_iter()
                     .find(|x| x.id == attribute_id)
-                    .ok_or(SimpleError::new(format!(
-                        "Couldn't find attribute with id {} on device {}",
-                        attribute_id, device_id
-                    )))?,
+                    .ok_or_else(|| {
+                        simple_error!(
+                            "Couldn't find attribute with id {} on device {}",
+                            attribute_id,
+                            device_id
+                        )
+                    })?,
             )
         };
         if !attribute.supports_write {
@@ -162,7 +144,7 @@ impl<'a> DeviceSyncer {
         let value = attribute.attribute_type.parse(payload_str)?;
 
         self.controller.set(device_id, attribute_id, &value).await?;
-        info!(slog_scope::logger(), "set"; "device_id" => device_id, "device" => &device_name, "attribute" => &attribute.description, "value" => format!("{:?}", value));
+        info!(slog_scope::logger(), "set"; "device_id" => device_id, "device" => &device_name, "attribute" => &attribute.description, "value" => ?value);
 
         self.repoll.try_send(device_id)?;
 
@@ -245,7 +227,12 @@ impl<'a> DeviceSyncer {
                 Ok(())
             }
             Incoming::Publish(message) => {
-                self.process_one(message).await?;
+                let this = self.clone();
+                tokio::task::spawn(async move {
+                    this.process_one(message)
+                        .await
+                        .log_failing_result("process_message_failed");
+                });
                 Ok(())
             }
             Incoming::PubAck(_) => Ok(()),
@@ -314,7 +301,9 @@ impl<'a> DeviceSyncer {
         trace!(slog_scope::logger(), "poll_device_status"; "device_id" => device_id, "payload" => &payload);
 
         let mut publish = Publish::new(
-            format!("{}{}/status", self.topic_prefix, device_id),
+            self.config
+                .to_topic_string(&TopicType::StatusTopic(device_id))
+                .unwrap(),
             rumqttc::QoS::AtLeastOnce,
             payload,
         );
@@ -334,7 +323,7 @@ impl<'a> DeviceSyncer {
         let all_devices = self.clone().controller.list().await?;
         let all_tasks = all_devices
             .into_iter()
-            .map(|x| Self::poll_device(self.clone(), x.id))
+            .map(|x| self.clone().poll_device(x.id))
             .collect::<Vec<_>>();
         for task in all_tasks {
             task.await
@@ -377,14 +366,12 @@ impl<'a> DeviceSyncer {
 
         let device = self.clone().controller.describe(id).await?;
 
-        match device_to_discovery_payload(&self.topic_prefix, &device) {
+        match device_to_discovery_payload(&self.config, &device) {
             Some(v) => {
-                let topic = format!(
-                    "{}{}/wink_{}/config",
-                    self.discovery_prefix.as_ref().unwrap(),
-                    v.component,
-                    device.id
-                );
+                let topic = self
+                    .config
+                    .to_topic_string(&TopicType::DiscoveryTopic(v.component.into(), device.id))
+                    .ok_or_else(|| simple_error!("No discovery topic for device {}", device.id))?;
                 let config = v.discovery_info.to_string();
                 info!(slog_scope::logger(), "discovered_device"; "id" => id, "name" => &device.name);
                 debug!(slog_scope::logger(), "broadcast_discovery_result"; "id" => id, "topic" => &topic, "config" => &config);
@@ -398,7 +385,7 @@ impl<'a> DeviceSyncer {
                 Ok(())
             }
             None => {
-                warn!(slog_scope::logger(), "unknown_device"; "device_id" => id, "device_info" => format!("{:?}", device));
+                warn!(slog_scope::logger(), "unknown_device"; "device_id" => id, "device_info" => ?device);
                 Ok(())
             }
         }

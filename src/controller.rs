@@ -1,7 +1,8 @@
 use async_trait::async_trait;
-use std::convert::{TryInto};
+use std::convert::TryInto;
 use std::error::Error;
 
+use crate::utils::Numberish;
 use regex::Regex;
 use simple_error::{bail, SimpleError};
 use slog::debug;
@@ -11,7 +12,6 @@ use std::future::Future;
 use std::pin::Pin;
 use tokio::process::Command;
 use tokio::sync::Mutex;
-use crate::utils::Numberish;
 
 pub type AttributeId = u32;
 pub type DeviceId = u32;
