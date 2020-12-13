@@ -1,5 +1,7 @@
 ## Next
 
+## 0.1.5
+ - Fix STRING types in the JSON mqtt set endpoint as well.
 
 ## 0.1.4
  - Add support for older version of firmware that doesn't report Gang data.
