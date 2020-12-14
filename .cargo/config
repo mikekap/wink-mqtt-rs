@@ -3,3 +3,4 @@ linker = "arm-linux-gnueabi-gcc"
 
 [target.armv5te-unknown-linux-musleabi]
 linker = "arm-linux-musleabi-gcc"
+rustflags = ["-L/usr/local/arm-linux-musleabi/lib/"]

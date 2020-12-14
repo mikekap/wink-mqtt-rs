@@ -4,6 +4,7 @@ use std::error::Error;
 
 use crate::utils::Numberish;
 use regex::Regex;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use simple_error::{bail, simple_error};
 use slog::debug;
 use slog_scope;
@@ -17,13 +18,13 @@ pub type AttributeId = u32;
 pub type DeviceId = u32;
 pub type DeviceStatus = String;
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Serialize)]
 pub struct ShortDevice {
     pub id: DeviceId,
     pub name: String,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub enum AttributeType {
     Bool,
     String,
@@ -121,7 +122,16 @@ impl AttributeValue {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+impl Serialize for AttributeValue {
+    fn serialize<S>(&self, serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error>
+    where
+        S: Serializer,
+    {
+        self.to_json().serialize(serializer)
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
 pub struct DeviceAttribute {
     pub id: AttributeId,
     pub description: String,
@@ -132,7 +142,7 @@ pub struct DeviceAttribute {
     pub setting_value: AttributeValue,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Serialize)]
 pub struct LongDevice {
     // These probably don't change often
     pub gang_id: Option<u32>,
@@ -369,13 +379,20 @@ impl FakeController {
 #[async_trait]
 impl DeviceController for FakeController {
     async fn list(&self) -> Result<Vec<ShortDevice>, Box<dyn Error>> {
-        Ok(vec![ShortDevice {
-            id: 2,
-            name: "Bedroom Fan".to_string(),
-        }])
+        Ok(vec![
+            ShortDevice {
+                id: 2,
+                name: "Bedroom Fan".to_string(),
+            },
+            ShortDevice {
+                id: 4,
+                name: "Bedroom Light".to_string(),
+            },
+        ])
     }
 
     async fn describe(&self, master_id: u32) -> Result<LongDevice, Box<dyn Error>> {
+        let attr_values = self.attr_values.lock().await;
         match master_id {
             2 => Ok(LongDevice {
                 gang_id: Some(0x03),
@@ -384,7 +401,7 @@ impl DeviceController for FakeController {
                 manufacturer_id: Some(0x63),
                 product_type: Some(0x4944),
                 product_number: Some(0x3131),
-                id: 2,
+                id: master_id,
                 status: "ONLINE".to_string(),
                 name: "Bedroom Fan".to_string(),
                 attributes: vec![
@@ -394,17 +411,11 @@ impl DeviceController for FakeController {
                         attribute_type: AttributeType::UInt8,
                         supports_write: true,
                         supports_read: true,
-                        current_value: self
-                            .attr_values
-                            .lock()
-                            .await
+                        current_value: attr_values
                             .get(&(master_id, 1 as AttributeId))
                             .unwrap_or(&AttributeValue::UInt8(0))
                             .clone(),
-                        setting_value: self
-                            .attr_values
-                            .lock()
-                            .await
+                        setting_value: attr_values
                             .get(&(master_id, 1 as AttributeId))
                             .unwrap_or(&AttributeValue::UInt8(0))
                             .clone(),
@@ -415,17 +426,11 @@ impl DeviceController for FakeController {
                         attribute_type: AttributeType::UInt8,
                         supports_write: true,
                         supports_read: true,
-                        current_value: self
-                            .attr_values
-                            .lock()
-                            .await
+                        current_value: attr_values
                             .get(&(master_id, 3 as AttributeId))
                             .unwrap_or(&AttributeValue::UInt8(0))
                             .clone(),
-                        setting_value: self
-                            .attr_values
-                            .lock()
-                            .await
+                        setting_value: attr_values
                             .get(&(master_id, 3 as AttributeId))
                             .unwrap_or(&AttributeValue::UInt8(0))
                             .clone(),
@@ -451,6 +456,33 @@ impl DeviceController for FakeController {
                 ],
             }),
 
+            4 => Ok(LongDevice {
+                gang_id: None,
+                generic_device_type: None,
+                specific_device_type: None,
+                manufacturer_id: None,
+                product_type: None,
+                product_number: None,
+                id: master_id,
+                status: "".to_string(),
+                name: "Bedroom Light".to_string(),
+                attributes: vec![DeviceAttribute {
+                    id: 1,
+                    description: "On_Off".to_string(),
+                    attribute_type: AttributeType::Bool,
+                    supports_write: true,
+                    supports_read: true,
+                    current_value: attr_values
+                        .get(&(master_id, 1 as AttributeId))
+                        .unwrap_or(&AttributeValue::Bool(false))
+                        .clone(),
+                    setting_value: attr_values
+                        .get(&(master_id, 1 as AttributeId))
+                        .unwrap_or(&AttributeValue::Bool(false))
+                        .clone(),
+                }],
+            }),
+
             _ => bail!("Device id {} not found", master_id),
         }
     }
@@ -461,12 +493,12 @@ impl DeviceController for FakeController {
         attribute_id: u32,
         value: &AttributeValue,
     ) -> Result<(), Box<dyn Error>> {
-        if master_id != 2
+        if (master_id != 2 && master_id != 4)
             || attribute_id < 1
             || attribute_id > 5
             || *value == AttributeValue::NoValue
         {
-            bail!("Invalid inputs: {}/{}", master_id, attribute_id)
+            bail!("Invalid set inputs: {}/{}", master_id, attribute_id)
         }
         self.attr_values
             .lock()
