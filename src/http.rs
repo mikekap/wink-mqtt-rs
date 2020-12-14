@@ -12,7 +12,8 @@ use std::ffi::OsStr;
 use rust_embed::RustEmbed;
 use std::error::Error;
 use regex::Regex;
-use simple_error::{simple_error};
+use simple_error::{simple_error, bail};
+use tokio::process::Command;
 
 pub struct HttpServer {
     config: Config,
@@ -124,11 +125,77 @@ impl HttpServer {
                     Ok(Self::json_error_response(&e))
                 })
             },
+            (&Method::POST, "/api/devices/discovery") => {
+                return self.do_discovery(request).await.or_else(|e| {
+                    error!(slog_scope::logger(), "discovery_failed"; "error" => ?e);
+                    Ok(Self::json_error_response(&e))
+                })
+            },
+            (&Method::POST, "/api/aprontest") => {
+                return self.do_run_raw(request).await.or_else(|e| {
+                    error!(slog_scope::logger(), "run_raw_failed"; "error" => ?e);
+                    Ok(Self::json_error_response(&e))
+                })
+            },
             _ => Ok(Response::builder()
                 .status(404)
                 .body(Body::from("Not found"))
                 .unwrap()),
         }
+    }
+
+    async fn run_command_output(self: Arc<Self>, mut command: Command) -> Result<Response<Body>, Box<dyn Error>> {
+        let result = command.output().await;
+        let result = match result {
+            Ok(result) => result,
+            Err(e) => {
+                return Ok(Self::json_response(200, serde_json::json!({
+                  "status": false,
+                  "stdout": "",
+                  "stderr": format!("{:?}", e),
+                })))
+            },
+        };
+
+        Ok(Self::json_response(200, serde_json::json!({
+            "status": result.status.success(),
+            "stdout": std::str::from_utf8(&result.stdout)?,
+            "stderr": std::str::from_utf8(&result.stderr)?,
+        })))
+    }
+
+    async fn do_run_raw(self: Arc<Self>, request: Request<Body>) -> Result<Response<Body>, Box<dyn Error>> {
+        let body = hyper::body::to_bytes(request.into_body()).await?;
+        let json : serde_json::Value = serde_json::from_slice(&body)?;
+        let args: Vec<_> = match &json["command"] {
+            serde_json::Value::String(x) if x == "aprontest" || x.starts_with("aprontest ") => x.split(" ").collect(),
+            _ => bail!("Bad input"),
+        };
+
+        info!(slog_scope::logger(), "running_raw_command"; "cmd" => %&json["command"]);
+
+        let mut command = Command::new(args.first().unwrap());
+        command.args(args.into_iter().skip(1));
+        self.run_command_output(command).await
+    }
+
+    async fn do_discovery(self: Arc<Self>, request: Request<Body>) -> Result<Response<Body>, Box<dyn Error>> {
+        let body = hyper::body::to_bytes(request.into_body()).await?;
+        let json : serde_json::Value = serde_json::from_slice(&body)?;
+        let radio = match &json["radio"] {
+            serde_json::Value::String(r) if ["zwave", "zigbee", "lutron", "kidde"].contains(&r.as_str()) => r,
+            _ => bail!("Bad input"),
+        };
+
+        info!(slog_scope::logger(), "running_discovery"; "radio" => &radio);
+
+        let mut command = Command::new("aprontest");
+        command
+            .arg("-a")
+            .arg("60")
+            .arg("-r")
+            .arg(radio);
+        self.run_command_output(command).await
     }
 
     async fn set_attribute(self: Arc<Self>, request: Request<Body>) -> Result<Response<Body>, Box<dyn Error>> {
@@ -147,6 +214,8 @@ impl HttpServer {
         };
 
         self.controller.set(device_id, attribute_id, &attribute_value).await?;
+
+        // TODO(mikekap): Force the syncer to rescan.
 
         Ok(Self::json_response(200, serde_json::json!({})))
     }

@@ -60,7 +60,7 @@ const Nav = (props) => {
       <ul className="navbar-nav">
         <NavLink id="home" name="Home" {...props} />
         <NavLink id="add" name="Add Device" {...props} />
-        <NavLink id="raw" name="aprontest output" {...props} />
+        <NavLink id="aprontest" name="aprontest output" {...props} />
       </ul>
     </div>
   </nav>;
@@ -119,13 +119,8 @@ const AttributeControlOnOff = ({attribute, changeValue}) => {
   const isOn = attribute.setting_value === true || ('' + attribute.setting_value).toUpperCase() === 'ON';
 
   return <div>
-    <div className="btn-group btn-group-toggle">
-      <label className={["btn", "btn-secondary", isOn ? "active" : ""].join(" ")}>
-        <input type="radio" checked={isOn} onChange={(e) => {e.preventDefault(); changeValue('ON') }} /> On
-      </label>
-      <label className={["btn", "btn-secondary", !isOn ? "active" : ""].join(" ")}>
-        <input type="radio" checked={!isOn} onChange={(e) => {e.preventDefault(); changeValue('OFF') }} /> Off
-      </label>
+    <div className="form-check form-switch">
+      <input className="form-check-input" type="checkbox" id="flexSwitchCheckDefault" checked={isOn} onChange={(e) => { e.preventDefault(); changeValue(e.target.checked ? 'ON' : 'OFF')}} />
     </div>
   </div>;
 }
@@ -189,7 +184,7 @@ const DeviceDetails = ({device, changeName, setAttribute}) => {
   {interestingAttr ? <>
     <div className="p-3 d-flex flex-column">
     <AttributeControl attribute={interestingAttr} changeValue={(v) => {setAttribute(interestingAttr, v)}} />
-    <span><strong>Current Value: </strong> {interestingAttr.current_value}</span></div>
+    <span><strong>Current Value: </strong> {interestingAttr.current_value + ''}</span></div>
     </>
     :
     <h3>Unknown device type</h3>}
@@ -247,6 +242,83 @@ const HomePage = ({device, setDevice}) => {
   }
 }
 
+const AddDevice = () => {
+  const [discoveryPending, setDiscoveryPending] = React.useState(false);
+  const [discoveryOutput, setDiscoveryOutput] = React.useState(null);
+
+  return <div>
+    <form className="d-flex" onSubmit={(e) => {
+                                if (discoveryPending) { return; }
+
+                                e.preventDefault();
+                                const data = Object.fromEntries(new FormData(e.target));
+
+                                setDiscoveryPending(true);
+                                setDiscoveryOutput('');
+                                api({url: '/api/devices/discovery', data: data})
+                                  .then(v => {
+                                    setDiscoveryOutput(
+                                      '' + (v.status ? 'OK' : 'ERROR') + '\n\n' +
+                                      'Stdout:\n' + v.stdout + '\n\n' +
+                                      'Stderr:\n' + v.stderr
+                                    );
+                                  })
+                                  .finally(v => {
+                                    setDiscoveryPending(false);
+                                  })
+                              }}>
+      <div className="form-floating flex-grow-1 me-3">
+        <select className="form-select" name="radio">
+          <option value="zwave">Z-Wave</option>
+          <option value="zigbee">Zigbee</option>
+          <option value="lutron">Lutron</option>
+          <option value="kidde">Kidde</option>
+        </select>
+        <label>Select Radio Type</label>
+      </div>
+      <button type="submit" className="btn btn-primary" disabled={discoveryPending}>Start Discovery</button>
+    </form>
+    <pre className="border d-block mt-3"><code>
+      {discoveryPending ? 'Discovery started...' : ''}
+      {discoveryOutput}
+    </code></pre>
+  </div>
+};
+
+const RawApronTest = () => {
+  const [running, setRunning] = React.useState(false);
+  const [output, setOutput] = React.useState(null);
+
+  return <div>
+    <form className="d-flex" onSubmit={(e) => {
+      e.preventDefault();
+      const data = Object.fromEntries(new FormData(e.target));
+
+      setRunning(true);
+      setOutput('');
+      api({url: '/api/aprontest', data: data})
+          .then(v => {
+            setOutput(
+              '' + (v.status ? 'OK' : 'ERROR') + '\n\n' +
+              'Stdout:\n' + v.stdout + '\n\n' +
+              'Stderr:\n' + v.stderr
+            );
+          })
+         .finally(() => setRunning(false))
+    }}>
+      <div className="form-floating flex-grow-1 me-3">
+        <input name="command" type="text" className="form-control" defaultValue="aprontest" />
+        <label>Type Command</label>
+      </div>
+      <button type="submit" className="btn btn-primary" disabled={running}>Run</button>
+    </form>
+    <pre className="border d-block mt-3"><code>
+      {running ? 'Running...' : ''}
+      {output}
+    </code></pre>
+  </div>
+};
+
 const Root = () => {
   const [active, setActive] = React.useState('home');
   const [device, setDevice] = React.useState(null);
@@ -265,6 +337,8 @@ const Root = () => {
     <Nav active={active} setActive={(active) => { setActive(active); setDevice(null); }} />
     <div className="p-4">
       {active === 'home' ? <HomePage device={device} setDevice={setDevice} /> : null}
+      {active === 'add' ? <AddDevice /> : null}
+      {active === 'aprontest' ? <RawApronTest /> : null}
     </div>
     <ErrorToast message={error} onDismiss={() => setError(null)} />
   </div>;
