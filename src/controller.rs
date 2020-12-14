@@ -4,6 +4,7 @@ use std::error::Error;
 
 use crate::utils::Numberish;
 use regex::Regex;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use simple_error::{bail, simple_error};
 use slog::debug;
 use slog_scope;
@@ -12,7 +13,6 @@ use std::future::Future;
 use std::pin::Pin;
 use tokio::process::Command;
 use tokio::sync::Mutex;
-use serde::{Serialize, Serializer, Deserialize, Deserializer};
 
 pub type AttributeId = u32;
 pub type DeviceId = u32;
@@ -123,8 +123,10 @@ impl AttributeValue {
 }
 
 impl Serialize for AttributeValue {
-    fn serialize<S>(&self, serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error> where
-        S: Serializer {
+    fn serialize<S>(&self, serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error>
+    where
+        S: Serializer,
+    {
         self.to_json().serialize(serializer)
     }
 }
@@ -377,21 +379,20 @@ impl FakeController {
 #[async_trait]
 impl DeviceController for FakeController {
     async fn list(&self) -> Result<Vec<ShortDevice>, Box<dyn Error>> {
-        Ok(vec![ShortDevice {
-            id: 2,
-            name: "Bedroom Fan".to_string(),
-        },
-                ShortDevice {
-                    id: 4,
-                    name: "Bedroom Light".to_string(),
-                }])
+        Ok(vec![
+            ShortDevice {
+                id: 2,
+                name: "Bedroom Fan".to_string(),
+            },
+            ShortDevice {
+                id: 4,
+                name: "Bedroom Light".to_string(),
+            },
+        ])
     }
 
     async fn describe(&self, master_id: u32) -> Result<LongDevice, Box<dyn Error>> {
-        let attr_values = self
-            .attr_values
-            .lock()
-            .await;
+        let attr_values = self.attr_values.lock().await;
         match master_id {
             2 => Ok(LongDevice {
                 gang_id: Some(0x03),
@@ -465,23 +466,21 @@ impl DeviceController for FakeController {
                 id: master_id,
                 status: "".to_string(),
                 name: "Bedroom Light".to_string(),
-                attributes: vec![
-                    DeviceAttribute {
-                        id: 1,
-                        description: "On_Off".to_string(),
-                        attribute_type: AttributeType::Bool,
-                        supports_write: true,
-                        supports_read: true,
-                        current_value: attr_values
-                            .get(&(master_id, 1 as AttributeId))
-                            .unwrap_or(&AttributeValue::Bool(false))
-                            .clone(),
-                        setting_value: attr_values
-                            .get(&(master_id, 1 as AttributeId))
-                            .unwrap_or(&AttributeValue::Bool(false))
-                            .clone(),
-                    },
-                ],
+                attributes: vec![DeviceAttribute {
+                    id: 1,
+                    description: "On_Off".to_string(),
+                    attribute_type: AttributeType::Bool,
+                    supports_write: true,
+                    supports_read: true,
+                    current_value: attr_values
+                        .get(&(master_id, 1 as AttributeId))
+                        .unwrap_or(&AttributeValue::Bool(false))
+                        .clone(),
+                    setting_value: attr_values
+                        .get(&(master_id, 1 as AttributeId))
+                        .unwrap_or(&AttributeValue::Bool(false))
+                        .clone(),
+                }],
             }),
 
             _ => bail!("Device id {} not found", master_id),
