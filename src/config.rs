@@ -15,6 +15,7 @@ pub struct Config {
     pub discovery_topic_prefix: Option<String>,
     pub discovery_listen_topic: Option<String>,
     pub resync_interval: u64,
+    pub http_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -48,11 +49,12 @@ impl Config {
     }
 
     pub fn new(
-        mqtt_options: Option<&MqttOptions>,
+        mqtt_options: Option<MqttOptions>,
         topic_prefix: Option<&str>,
         discovery_topic_prefix: Option<&str>,
         discovery_listen_topic: Option<&str>,
         resync_interval: u64,
+        http_port: Option<u16>,
     ) -> Config {
         Config {
             mqtt_options: mqtt_options.map(|x| x.clone()),
@@ -60,6 +62,7 @@ impl Config {
             discovery_topic_prefix: discovery_topic_prefix.map(Self::normalize_topic_prefix),
             discovery_listen_topic: discovery_listen_topic.map(|x| x.to_string()),
             resync_interval,
+            http_port,
         }
     }
 
@@ -191,7 +194,7 @@ mod tests {
 
     #[test]
     fn empty_config() {
-        let config = Config::new(None, None, None, None, 10);
+        let config = Config::new(None, None, None, None, 10, None);
 
         for case in TEST_CASES.iter() {
             assert_eq!(None, config.to_topic_string(case))
@@ -209,11 +212,12 @@ mod tests {
     #[test]
     fn full_config() {
         let config = Config::new(
-            Some(&MqttOptions::new("a", "localhost", 123)),
+            Some(MqttOptions::new("a", "localhost", 123)),
             Some("topic/prefix/"),
             Some("discovery/topic/prefix/"),
             Some("fire/discovery"),
             10,
+            None,
         );
 
         for case in TEST_CASES.iter() {

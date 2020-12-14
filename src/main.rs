@@ -9,7 +9,8 @@ use std::fs;
 use std::io::{BufReader, Read};
 
 use crate::config::Config;
-use clap::{crate_version, App, Arg, ArgMatches};
+use crate::http::HttpServer;
+use clap::{crate_version, App, Arg, ArgMatches, ErrorKind};
 use rumqttc::MqttOptions;
 use simple_error::bail;
 use slog::{info, o, trace, Drain};
@@ -22,6 +23,7 @@ use url::Url;
 mod config;
 mod controller;
 mod converter;
+mod http;
 mod syncer;
 mod utils;
 
@@ -46,8 +48,11 @@ fn init_logger(args: &ArgMatches) -> GlobalLoggerGuard {
     scope_guard
 }
 
-fn init_mqtt_client(a: &ArgMatches) -> Result<MqttOptions, Box<dyn Error>> {
-    let mqtt_uri = a.value_of("mqtt-uri").unwrap();
+fn init_mqtt_client(a: &ArgMatches) -> Result<Option<MqttOptions>, Box<dyn Error>> {
+    let mqtt_uri = match a.value_of("mqtt-uri") {
+        Some(v) => v,
+        None => return Ok(None),
+    };
     trace!(slog_scope::logger(), "parse_uri"; "uri" => mqtt_uri);
     let mqtt_uri = if !mqtt_uri.starts_with("mqtt://") && !mqtt_uri.starts_with("mqtts://") {
         format!("mqtt://{}", mqtt_uri)
@@ -97,7 +102,7 @@ fn init_mqtt_client(a: &ArgMatches) -> Result<MqttOptions, Box<dyn Error>> {
         }
     }
 
-    Ok(options)
+    Ok(Some(options))
 }
 
 #[tokio::main]
@@ -119,7 +124,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             .default_value("10000"))
         .arg(Arg::new("mqtt-uri")
             .short('s')
-            .required(true)
+            .required(false)
             .takes_value(true)
             .about("mqtt server to connect to. Should be of the form mqtt[s]://[username:password@]host:port/[?connection_options]"))
         .arg(Arg::new("topic-prefix")
@@ -137,11 +142,28 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             .long("--discovery-listen-topic")
             .about("Topic to listen to in order to (re)broadcast discovery information. Only applies if --discovery-prefix is set.")
             .default_value("homeassistant/status"))
+        .arg(Arg::new("http-port")
+            .required(false)
+            .takes_value(true)
+            .long("--http-port")
+            .about("If you'd like an http server, this is the port on which to start it")
+            .default_value("3000"))
         .get_matches();
 
     let resync_interval: u64 = matches
         .value_of_t("resync-interval")
         .unwrap_or_else(|e| e.exit());
+
+    let http_port = matches
+        .value_of_t::<u16>("http-port")
+        .map(|t| Some(t))
+        .unwrap_or_else(|e| {
+            if e.kind == ErrorKind::ArgumentNotFound {
+                None
+            } else {
+                e.exit()
+            }
+        });
 
     let _guard = init_logger(&matches);
 
@@ -149,18 +171,30 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
 
     let options = init_mqtt_client(&matches)?;
     let config = Config::new(
-        Some(&options),
+        options,
         matches.value_of("topic-prefix"),
         matches.value_of("discovery-prefix"),
         matches.value_of("discovery-listen-topic"),
         resync_interval,
+        http_port,
     );
     #[cfg(target_arch = "arm")]
     let controller = controller::AprontestController::new();
     #[cfg(not(target_arch = "arm"))]
     let controller = controller::FakeController::new();
     let controller = Arc::new(controller);
-    let _ = syncer::DeviceSyncer::new(&config, controller.clone());
+
+    let _syncer = if config.has_mqtt() {
+        Some(syncer::DeviceSyncer::new(&config, controller.clone()))
+    } else {
+        None
+    };
+    let _http = if http_port.is_some() {
+        Some(HttpServer::new(&config, controller.clone()))
+    } else {
+        None
+    };
+
     loop {
         tokio::time::delay_for(Duration::from_secs(0xfffff)).await;
     }
