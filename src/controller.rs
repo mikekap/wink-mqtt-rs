@@ -179,9 +179,9 @@ pub trait DeviceController: Send + Sync {
 pub struct AprontestController {
     runner: Box<
         dyn for<'a> Fn(
-            &'a [&str],
-        )
-            -> Pin<Box<dyn Future<Output = Result<String, Box<dyn Error>>> + 'a + Send>>
+                &'a [&str],
+            )
+                -> Pin<Box<dyn Future<Output = Result<String, Box<dyn Error>>> + 'a + Send>>
             + Send
             + Sync,
     >,
