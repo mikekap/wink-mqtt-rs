@@ -71,6 +71,19 @@ If you have a topic prefix of `home/wink/`, and a device id with `1` named `Fan`
 
 Messages on the discovery topic follow a format that works with home assistant MQTT discovery. For details, see [converter.rs](https://github.com/mikekap/wink-mqtt-rs/blob/master/src/converter.rs).
 
+### HTTP Server
+
+An HTTP server is started (by default on port 3000) to let you see a quick UI of what your wink sees. Visit `http://192.168.1.123:3000/` in your browser to see it (replacing `192.168.1.123` with however you reach your wink).
+
+In addition, there's an (unstable) REST API to control the wink exposed via this server. The endpoints are:
+```
+# List of devices, as well as current attribute values
+curl http://wink:3000/api/devices
+
+# Set device id 2's attribute id 3 to 255.
+curl http://wink:3000/api/devices/2/3 -d '{"value": 255}' -H "Content-Type: application/json"
+```
+
 ## Known Issues
  - Groups are not exposed.
  - Does not send device details to Home Assistant, even though the data exists. PRs welcome!
