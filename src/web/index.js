@@ -222,7 +222,7 @@ const MqttLog = () => {
 
   React.useEffect(() => {
     api('/api/events').then(l => setEvents(l.events.reverse()));
-  });
+  }, []);
 
   return <div>
     {events.map((e) => {

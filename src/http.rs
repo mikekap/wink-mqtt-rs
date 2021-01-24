@@ -27,6 +27,7 @@ pub struct HttpServer {
 #[folder = "src/web/"]
 struct Assets;
 
+
 lazy_static! {
     static ref SET_DEVICE_ATTRIBUTE_REGEX: Regex =
         Regex::new("/api/devices/(?P<device_id>[0-9]+)/(?P<attribute_id>[0-9]+)").unwrap();
