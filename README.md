@@ -73,11 +73,8 @@ Messages on the discovery topic follow a format that works with home assistant M
 
 ## Known Issues
  - Groups are not exposed.
- - This has only been tested with Z-Wave devices. It may not work in other scenarios.
-   This is very easy to fix, so please file issues with the output of `aprontest -l` and `aprontest -l -m <device_id>` from your Wink!
  - Does not send device details to Home Assistant, even though the data exists. PRs welcome!
  - `mqtts` support is untested.
- - Could be smarter about tailing log files (like wink-mqtt), but a resync every 10 seconds seems fine.
  - Don't publish status if nothing changed. Easy fix, if necessary.
 
 ## Uninstalling
