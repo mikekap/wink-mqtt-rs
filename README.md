@@ -20,12 +20,12 @@ You can configure more options by editing the `/opt/wink-mqtt-rs/config` file af
 
 ## Usage
 ```bash
-wink-mqtt-rs 0.1.5
+wink-mqtt-rs 0.2.0
 Mike Kaplinskiy <mike.kaplinskiy@gmail.com>
 wink hub v1 mqtt bridge
 
 USAGE:
-    wink-mqtt-rs [FLAGS] [OPTIONS] -s <mqtt-uri>
+    wink-mqtt-rs [FLAGS] [OPTIONS]
 
 FLAGS:
     -h, --help       Prints help information
@@ -34,16 +34,23 @@ FLAGS:
 
 OPTIONS:
         --discovery-listen-topic <discovery-listen-topic>
-            Topic to listen to in order to (re)broadcast discovery information. Only applies if --discovery-prefix is
-            set. [default: homeassistant/status]
+            Topic to listen to in order to (re)broadcast discovery information. Only applies if
+            --discovery-prefix is set. [default: homeassistant/status]
+
     -d <discovery-prefix>
-            Prefix (applied independently of --topic-prefix) to broadcast mqtt discovery information (see
-            https://www.home-assistant.io/docs/mqtt/discovery/)
+            Prefix (applied independently of --topic-prefix) to broadcast mqtt discovery information
+            (see https://www.home-assistant.io/docs/mqtt/discovery/)
+
+        --http-port <http-port>
+            If you'd like an http server, this is the port on which to start it [default: 3000]
+
     -s <mqtt-uri>
             mqtt server to connect to. Should be of the form
             mqtt[s]://[username:password@]host:port/[?connection_options]
+
     -i <resync-interval>
-            how frequently to check if the light changed state (e.g. via Wink or other external means) [default: 10000]
+            how frequently to check if the light changed state (e.g. via Wink or other external
+            means) [default: 10000]
 
     -t <topic-prefix>
             Prefix for the mqtt topic used for device status/control [default: home/wink/]
@@ -64,13 +71,23 @@ If you have a topic prefix of `home/wink/`, and a device id with `1` named `Fan`
 
 Messages on the discovery topic follow a format that works with home assistant MQTT discovery. For details, see [converter.rs](https://github.com/mikekap/wink-mqtt-rs/blob/master/src/converter.rs).
 
+### HTTP Server
+
+An HTTP server is started (by default on port 3000) to let you see a quick UI of what your wink sees. Visit `http://192.168.1.123:3000/` in your browser to see it (replacing `192.168.1.123` with however you reach your wink).
+
+In addition, there's an (unstable) REST API to control the wink exposed via this server. The endpoints are:
+```
+# List of devices, as well as current attribute values
+curl http://wink:3000/api/devices
+
+# Set device id 2's attribute id 3 to 255.
+curl http://wink:3000/api/devices/2/3 -d '{"value": 255}' -H "Content-Type: application/json"
+```
+
 ## Known Issues
  - Groups are not exposed.
- - This has only been tested with Z-Wave devices. It may not work in other scenarios.
-   This is very easy to fix, so please file issues with the output of `aprontest -l` and `aprontest -l -m <device_id>` from your Wink!
  - Does not send device details to Home Assistant, even though the data exists. PRs welcome!
  - `mqtts` support is untested.
- - Could be smarter about tailing log files (like wink-mqtt), but a resync every 10 seconds seems fine.
  - Don't publish status if nothing changed. Easy fix, if necessary.
 
 ## Uninstalling

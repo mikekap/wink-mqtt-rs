@@ -1,4 +1,6 @@
 ## Next
+
+## 0.2.0
  - Add HTTP server running on port 3000. You can toggle stuff on it!
  - Crash when the message queue is full, in the hopes that the supervisor restarts us. rumqttc seems to have issues reconnecting sometimes.
  - Broadcast discovery info every time we connect to the mqtt server.
