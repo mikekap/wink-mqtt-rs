@@ -18,7 +18,7 @@ and follow the prompts!
 
 You can configure more options by editing the `/opt/wink-mqtt-rs/config` file after installation (it's just the CLI args to the process).
 
-## Usage
+## Options
 ```bash
 wink-mqtt-rs 0.2.0
 Mike Kaplinskiy <mike.kaplinskiy@gmail.com>
@@ -57,6 +57,10 @@ OPTIONS:
 ```
 
 The default setup above will read these options from `/opt/wink-mqtt-rs/config` . You can also see this by running `cargo +nightly run`.
+
+## Logs
+
+If you're having issues, you can find logs at `/var/log/wink-mqtt-rs.log`. Adding `-vvv` to the config mentioned above will increase the verbosity of logs.
 
 ### MQTT Messages
 
