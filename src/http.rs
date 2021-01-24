@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::controller::{AttributeId, DeviceController, DeviceId};
+use crate::syncer::DeviceSyncer;
 use crate::utils::{Numberish, ResultExtensions};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server};
@@ -14,19 +15,17 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::oneshot::Sender;
-use crate::syncer::DeviceSyncer;
 
 pub struct HttpServer {
     config: Config,
     controller: Arc<dyn DeviceController>,
     shutdown_signal: Sender<()>,
-    syncer: Option<Arc<DeviceSyncer>>
+    syncer: Option<Arc<DeviceSyncer>>,
 }
 
 #[derive(RustEmbed)]
 #[folder = "src/web/"]
 struct Assets;
-
 
 lazy_static! {
     static ref SET_DEVICE_ATTRIBUTE_REGEX: Regex =
@@ -34,7 +33,11 @@ lazy_static! {
 }
 
 impl HttpServer {
-    pub fn new(config: &Config, controller: Arc<dyn DeviceController>, syncer: Option<Arc<DeviceSyncer>>) -> Arc<HttpServer> {
+    pub fn new(
+        config: &Config,
+        controller: Arc<dyn DeviceController>,
+        syncer: Option<Arc<DeviceSyncer>>,
+    ) -> Arc<HttpServer> {
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
         let this = Arc::new(HttpServer {
@@ -153,11 +156,10 @@ impl HttpServer {
         }
     }
 
-    async fn last_messages(
-        self: Arc<Self>
-    ) -> Result<Response<Body>, Box<dyn Error>> {
-        let result : Vec<_> = {
-            let lock = self.syncer
+    async fn last_messages(self: Arc<Self>) -> Result<Response<Body>, Box<dyn Error>> {
+        let result: Vec<_> = {
+            let lock = self
+                .syncer
                 .as_ref()
                 .ok_or_else(|| simple_error!("No MQTT syncer!"))?
                 .last_n_messages
@@ -165,7 +167,10 @@ impl HttpServer {
                 .await;
             (*lock).iter().cloned().collect()
         };
-        Ok(Self::json_response(200, serde_json::json!({"events": result})))
+        Ok(Self::json_response(
+            200,
+            serde_json::json!({ "events": result }),
+        ))
     }
 
     async fn run_command_output(

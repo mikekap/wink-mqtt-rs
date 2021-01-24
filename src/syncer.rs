@@ -4,21 +4,21 @@ use crate::converter::device_to_discovery_payload;
 use crate::utils::ResultExtensions;
 use async_channel::{bounded, Receiver, Sender};
 use rumqttc::{Event, EventLoop, Incoming, Publish, Request, Subscribe};
+use serde::{Serialize, Serializer};
 use serde_json::value::Value::Object;
 use simple_error::{bail, simple_error};
-use slog::{debug, error, info, trace, warn, crit};
+use slog::{crit, debug, error, info, trace, warn};
 use slog_scope;
 use std::collections::{HashMap, VecDeque};
 use std::error::Error;
-use std::sync::Arc;
-use tokio::time::Duration;
-use tokio::sync::Mutex;
-use serde::{Serialize, Serializer};
 use std::ops::Deref;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio::time::Duration;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MaybeJsonString {
-    pub byte_contents: Vec<u8>
+    pub byte_contents: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -26,29 +26,29 @@ pub enum LoggedMessage {
     OutgoingMessage(String, MaybeJsonString),
     IncomingMessage(String, MaybeJsonString),
     Connected,
-    Disconnected
+    Disconnected,
 }
 
 impl MaybeJsonString {
-    pub fn new<P : Clone + Into<Vec<u8>>>(bytes: &P) -> MaybeJsonString {
-        MaybeJsonString{
+    pub fn new<P: Clone + Into<Vec<u8>>>(bytes: &P) -> MaybeJsonString {
+        MaybeJsonString {
             byte_contents: bytes.clone().into(),
         }
     }
 }
 
 impl Serialize for MaybeJsonString {
-    fn serialize<S>(&self, serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error> where
-        S: Serializer {
+    fn serialize<S>(&self, serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error>
+    where
+        S: Serializer,
+    {
         let str = match std::str::from_utf8(&self.byte_contents) {
             Ok(v) => v,
-            Err(_) => {
-                return serializer.serialize_bytes(&self.byte_contents)
-            },
+            Err(_) => return serializer.serialize_bytes(&self.byte_contents),
         };
         match serde_json::from_str(str) {
             Ok(Object(m)) => m.serialize(serializer),
-            _ => serializer.serialize_str(str)
+            _ => serializer.serialize_str(str),
         }
     }
 }
@@ -58,7 +58,7 @@ pub struct DeviceSyncer {
     controller: Arc<dyn DeviceController>,
     sender: Sender<Request>,
     repoll: Sender<DeviceId>,
-    pub last_n_messages: Mutex<VecDeque<LoggedMessage>>
+    pub last_n_messages: Mutex<VecDeque<LoggedMessage>>,
 }
 
 impl<'a> DeviceSyncer {
@@ -73,7 +73,7 @@ impl<'a> DeviceSyncer {
             controller,
             sender: ev.handle(),
             repoll: repoll_sender,
-            last_n_messages: Mutex::new(VecDeque::with_capacity(10))
+            last_n_messages: Mutex::new(VecDeque::with_capacity(10)),
         };
         let this = Arc::new(syncer);
         trace!(slog_scope::logger(), "start_thread");
@@ -281,9 +281,11 @@ impl<'a> DeviceSyncer {
                 Ok(())
             }
             Incoming::Publish(message) => {
-                self.clone().log_message(LoggedMessage::IncomingMessage(
-                    message.topic.clone(),
-                    MaybeJsonString::new(&message.payload.deref())))
+                self.clone()
+                    .log_message(LoggedMessage::IncomingMessage(
+                        message.topic.clone(),
+                        MaybeJsonString::new(&message.payload.deref()),
+                    ))
                     .await;
                 let this = self.clone();
                 tokio::task::spawn(async move {
@@ -310,7 +312,7 @@ impl<'a> DeviceSyncer {
             Incoming::Disconnect => {
                 self.clone().log_message(LoggedMessage::Disconnected).await;
                 Ok(())
-            },
+            }
         };
     }
 
@@ -348,27 +350,23 @@ impl<'a> DeviceSyncer {
         let payload = serde_json::Value::Object(attributes).to_string();
         trace!(slog_scope::logger(), "poll_device_status"; "device_id" => device_id, "payload" => &payload);
 
-        let topic = self.config
+        let topic = self
+            .config
             .to_topic_string(&TopicType::StatusTopic(device_id))
             .unwrap();
-        let logged_message = LoggedMessage::OutgoingMessage(
-            topic.clone(),
-            MaybeJsonString::new(&payload));
-        let mut publish = Publish::new(
-            topic,
-            rumqttc::QoS::AtLeastOnce,
-            payload,
-        );
+        let logged_message =
+            LoggedMessage::OutgoingMessage(topic.clone(), MaybeJsonString::new(&payload));
+        let mut publish = Publish::new(topic, rumqttc::QoS::AtLeastOnce, payload);
         publish.retain = true;
         match self.sender.try_send(Request::Publish(publish)) {
             Ok(_) => {
                 self.log_message(logged_message).await;
                 Ok(())
-            },
+            }
             Err(e) => {
                 crit!(slog_scope::logger(), "sending_failed_crashing_to_maybe_reconnect"; "error" => ?e);
                 panic!(e)
-            },
+            }
         }
     }
 
@@ -434,10 +432,8 @@ impl<'a> DeviceSyncer {
                 let config = v.discovery_info.to_string();
                 info!(slog_scope::logger(), "discovered_device"; "id" => id, "name" => &device.name);
                 debug!(slog_scope::logger(), "broadcast_discovery_result"; "id" => id, "topic" => &topic, "config" => &config);
-                let log_message = LoggedMessage::OutgoingMessage(
-                    topic.clone(),
-                    MaybeJsonString::new(&config),
-                );
+                let log_message =
+                    LoggedMessage::OutgoingMessage(topic.clone(), MaybeJsonString::new(&config));
                 self.sender
                     .send(Request::Publish(Publish::new(
                         topic,
