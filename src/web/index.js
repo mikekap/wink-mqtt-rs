@@ -60,6 +60,7 @@ const Nav = (props) => {
       <ul className="navbar-nav">
         <NavLink id="home" name="Home" {...props} />
         <NavLink id="add" name="Add Device" {...props} />
+        <NavLink id="mqtt" name="MQTT Log" {...props} />
         <NavLink id="aprontest" name="aprontest output" {...props} />
       </ul>
     </div>
@@ -216,6 +217,20 @@ const DeviceDetails = ({device, changeName, setAttribute}) => {
   </div>
 }
 
+const MqttLog = () => {
+  const [events, setEvents] = React.useState(["Loading"]);
+
+  React.useEffect(() => {
+    api('/api/events').then(l => setEvents(l.events.reverse()));
+  });
+
+  return <div>
+    {events.map((e) => {
+      return <reactJsonView.default name="event" sortKeys={true} src={e} />
+    })}
+  </div>;
+}
+
 const HomePage = ({device, setDevice}) => {
   const [deviceRefresh, setDeviceRefresh] = React.useState(0);
   const [devicesList, setDevicesList] = React.useState(null);
@@ -338,6 +353,7 @@ const Root = () => {
     <div className="p-4">
       {active === 'home' ? <HomePage device={device} setDevice={setDevice} /> : null}
       {active === 'add' ? <AddDevice /> : null}
+      {active === 'mqtt' ? <MqttLog /> : null}
       {active === 'aprontest' ? <RawApronTest /> : null}
     </div>
     <ErrorToast message={error} onDismiss={() => setError(null)} />

@@ -4,7 +4,7 @@ use std::error::Error;
 
 use crate::utils::Numberish;
 use regex::Regex;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Serialize, Serializer};
 use simple_error::{bail, simple_error};
 use slog::debug;
 use slog_scope;
