@@ -4,7 +4,7 @@ use std::error::Error;
 
 use crate::utils::Numberish;
 use regex::Regex;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Serialize, Serializer};
 use simple_error::{bail, simple_error};
 use slog::debug;
 use slog_scope;
@@ -179,9 +179,9 @@ pub trait DeviceController: Send + Sync {
 pub struct AprontestController {
     runner: Box<
         dyn for<'a> Fn(
-            &'a [&str],
-        )
-            -> Pin<Box<dyn Future<Output = Result<String, Box<dyn Error>>> + 'a + Send>>
+                &'a [&str],
+            )
+                -> Pin<Box<dyn Future<Output = Result<String, Box<dyn Error>>> + 'a + Send>>
             + Send
             + Sync,
     >,

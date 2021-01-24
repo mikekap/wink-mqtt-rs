@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::controller::{AttributeId, DeviceController, DeviceId};
+use crate::syncer::DeviceSyncer;
 use crate::utils::{Numberish, ResultExtensions};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server};
@@ -19,6 +20,7 @@ pub struct HttpServer {
     config: Config,
     controller: Arc<dyn DeviceController>,
     shutdown_signal: Sender<()>,
+    syncer: Option<Arc<DeviceSyncer>>,
 }
 
 #[derive(RustEmbed)]
@@ -31,12 +33,17 @@ lazy_static! {
 }
 
 impl HttpServer {
-    pub fn new(config: &Config, controller: Arc<dyn DeviceController>) -> Arc<HttpServer> {
+    pub fn new(
+        config: &Config,
+        controller: Arc<dyn DeviceController>,
+        syncer: Option<Arc<DeviceSyncer>>,
+    ) -> Arc<HttpServer> {
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
         let this = Arc::new(HttpServer {
             config: config.clone(),
             controller,
+            syncer,
             shutdown_signal: tx,
         });
 
@@ -120,6 +127,10 @@ impl HttpServer {
                 error!(slog_scope::logger(), "device_list_failed"; "error" => ?e);
                 Ok(Self::json_error_response(&e))
             }),
+            (&Method::GET, "/api/events") => self.last_messages().await.or_else(|e| {
+                error!(slog_scope::logger(), "last_messages_failed"; "error" => ?e);
+                Ok(Self::json_error_response(&e))
+            }),
             (&Method::POST, path) if SET_DEVICE_ATTRIBUTE_REGEX.is_match(path) => {
                 return self.set_attribute(request).await.or_else(|e| {
                     error!(slog_scope::logger(), "set_attribute_failed"; "error" => ?e);
@@ -143,6 +154,23 @@ impl HttpServer {
                 .body(Body::from("Not found"))
                 .unwrap()),
         }
+    }
+
+    async fn last_messages(self: Arc<Self>) -> Result<Response<Body>, Box<dyn Error>> {
+        let result: Vec<_> = {
+            let lock = self
+                .syncer
+                .as_ref()
+                .ok_or_else(|| simple_error!("No MQTT syncer!"))?
+                .last_n_messages
+                .lock()
+                .await;
+            (*lock).iter().cloned().collect()
+        };
+        Ok(Self::json_response(
+            200,
+            serde_json::json!({ "events": result }),
+        ))
     }
 
     async fn run_command_output(

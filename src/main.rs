@@ -184,13 +184,13 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     let controller = controller::FakeController::new();
     let controller = Arc::new(controller);
 
-    let _syncer = if config.has_mqtt() {
+    let syncer = if config.has_mqtt() {
         Some(syncer::DeviceSyncer::new(&config, controller.clone()))
     } else {
         None
     };
     let _http = if http_port.is_some() {
-        Some(HttpServer::new(&config, controller.clone()))
+        Some(HttpServer::new(&config, controller.clone(), syncer))
     } else {
         None
     };
