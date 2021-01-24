@@ -56,19 +56,21 @@ impl HttpServer {
             }
         });
 
-        info!(slog_scope::logger(), "starting_http_server"; "port" => config.http_port.unwrap());
-
         let server = Server::bind(&SocketAddr::from(([0, 0, 0, 0], config.http_port.unwrap())))
             .tcp_nodelay(true)
             .http1_only(true)
             .http1_keepalive(false)
-            .serve(handler)
-            .with_graceful_shutdown(async move {
-                rx.await.ok();
-            });
+            .serve(handler);
+
+        info!(slog_scope::logger(), "started_http_server"; "listen_addr" => server.local_addr());
 
         tokio::task::spawn(async move {
-            server.await.log_failing_result("http_server_failed");
+            server
+                .with_graceful_shutdown(async move {
+                    rx.await.ok();
+                })
+                .await
+                .log_failing_result("http_server_failed");
         });
 
         this
