@@ -2,7 +2,9 @@
 
 This is a rust implementation of an MQTT daemon to run on the wink hub (1, not 2). This turns your wink hub into a mqtt "radio" that can control attached devices.
 
-This version also includes support for [home-assistant autodiscovery](https://www.home-assistant.io/docs/mqtt/discovery/) so you don't have to configure your devices by hand. 
+This version also includes support for [home-assistant autodiscovery](https://www.home-assistant.io/docs/mqtt/discovery/) so you don't have to configure your devices by hand.
+
+There is also a [guide for HomeSeer](https://forums.homeseer.com/forum/hs4-products/hs4-plugins/lighting-primary-technology-plug-ins-aa/mcsmqtt-michael-mcsharry-aa/1455752-hacking-the-wink-hub-v1-to-work-with-homeseer-via-mscmqtt) if you prefer that integration.
 
 ## Installation
 
