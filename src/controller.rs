@@ -6,7 +6,7 @@ use crate::utils::Numberish;
 use regex::Regex;
 use serde::{Serialize, Serializer};
 use simple_error::{bail, simple_error};
-use slog::debug;
+use slog::{debug, error};
 use slog_scope;
 use std::collections::HashMap;
 use std::future::Future;
@@ -342,7 +342,14 @@ impl DeviceController for AprontestController {
                         )?,
                     })
                 })
-                .collect::<Result<Vec<DeviceAttribute>, Box<dyn Error>>>()?,
+                .filter_map(|v| match v {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        error!(slog_scope::logger(), "failed_to_parse_attribute"; "error" => ?e);
+                        None
+                    }
+                })
+                .collect::<Vec<DeviceAttribute>>(),
         })
     }
 
