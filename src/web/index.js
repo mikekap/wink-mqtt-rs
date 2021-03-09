@@ -145,6 +145,8 @@ const AttributeControlLevel = ({attribute, changeValue}) => {
     max = 65535;
   } else if (attribute.attribute_type === 'UInt32') {
     max = 4294967295;
+  } else if (attribute.attribute_type === 'UInt64') {
+    max = 18446744073709550000;
   } else {
     return <div>Unknown Level Type: {attribute.attribute_type}</div>
   }

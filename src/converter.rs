@@ -33,11 +33,12 @@ fn switch_to_discovery_payload(
     let on_off = device.attribute("On_Off").unwrap();
 
     let (payload_on, payload_off) = match on_off.attribute_type {
-        AttributeType::UInt8 => ("0", "255"),
-        AttributeType::UInt16 => ("0", "65535"),
-        AttributeType::UInt32 => ("0", "4294967295"),
-        AttributeType::Bool => ("TRUE", "FALSE"),
-        AttributeType::String => ("ON", "OFF"),
+        AttributeType::UInt8 => ("0", format!("{}", u8::MAX)),
+        AttributeType::UInt16 => ("0", format!("{}", u16::MAX)),
+        AttributeType::UInt32 => ("0", format!("{}", u32::MAX)),
+        AttributeType::UInt64 => ("0", format!("{}", u64::MAX)),
+        AttributeType::Bool => ("TRUE", "FALSE".into()),
+        AttributeType::String => ("ON", "OFF".into()),
     };
 
     let unique_id = format!(
@@ -75,10 +76,11 @@ fn dimmer_to_discovery_payload(
     device: &LongDevice,
 ) -> Result<AutodiscoveryMessage, Box<dyn Error>> {
     let level = device.attribute("Level").unwrap();
-    let scale: u32 = match level.attribute_type {
-        AttributeType::UInt8 => u8::max_value() as u32,
-        AttributeType::UInt16 => u16::max_value() as u32,
-        AttributeType::UInt32 => u32::max_value(),
+    let scale: u64 = match level.attribute_type {
+        AttributeType::UInt8 => u8::MAX as u64,
+        AttributeType::UInt16 => u16::MAX as u64,
+        AttributeType::UInt32 => u32::MAX as u64,
+        AttributeType::UInt64 => u64::MAX,
         AttributeType::Bool => 1,
         AttributeType::String => {
             bail!("A string level type! Please report with `aprontest -l` output!")

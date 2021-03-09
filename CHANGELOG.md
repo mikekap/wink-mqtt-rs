@@ -1,4 +1,6 @@
 ## Next
+ - Added support for a UINT64 attribute type.
+
 
 ## 0.2.0
  - Add HTTP server running on port 3000. You can toggle stuff on it!
