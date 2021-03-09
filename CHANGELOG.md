@@ -1,4 +1,7 @@
 ## Next
+ - Added support for a UINT64 attribute type. (Closes #34)
+ - Broadcast discovery for all devices, even if one in the middle fails.
+ - Omit attributes from devices with unknown types.
 
 ## 0.2.0
  - Add HTTP server running on port 3000. You can toggle stuff on it!

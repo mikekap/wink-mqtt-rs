@@ -3,6 +3,7 @@ use crate::controller::{AttributeId, DeviceController, DeviceId};
 use crate::converter::device_to_discovery_payload;
 use crate::utils::ResultExtensions;
 use async_channel::{bounded, Receiver, Sender};
+use futures::future::join_all;
 use rumqttc::{Event, EventLoop, Incoming, Publish, Request, Subscribe};
 use serde::{Serialize, Serializer};
 use serde_json::value::Value::Object;
@@ -11,6 +12,7 @@ use slog::{crit, debug, error, info, trace, warn};
 use slog_scope;
 use std::collections::{HashMap, VecDeque};
 use std::error::Error;
+use std::future::Future;
 use std::ops::Deref;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -103,19 +105,15 @@ impl<'a> DeviceSyncer {
     }
 
     async fn do_subscribe(&self) -> Result<(), Box<dyn Error>> {
-        let subscribed: Vec<_> = self
-            .config
-            .mqtt_topic_subscribe_patterns()
-            .map(|topic| {
-                self.sender.send(Request::Subscribe(Subscribe::new(
-                    topic,
-                    rumqttc::QoS::AtLeastOnce,
-                )))
-            })
-            .collect();
-        for sub in subscribed {
-            sub.await?;
-        }
+        join_all(self.config.mqtt_topic_subscribe_patterns().map(|topic| {
+            self.sender.send(Request::Subscribe(Subscribe::new(
+                topic,
+                rumqttc::QoS::AtLeastOnce,
+            )))
+        }))
+        .await
+        .into_iter()
+        .collect::<Result<Vec<()>, rumqttc::SendError<rumqttc::Request>>>()?;
 
         self.repoll.send(0).await?;
 
@@ -147,7 +145,7 @@ impl<'a> DeviceSyncer {
                     .await?;
             }
             TopicType::DiscoveryListenTopic() => {
-                self.broadcast_discovery_().await?;
+                self.broadcast_discovery().await;
             }
             TopicType::StatusTopic(_) | TopicType::DiscoveryTopic(_, _) => {
                 // Don't need to do anything here; we really shouldn't get here though...
@@ -382,9 +380,7 @@ impl<'a> DeviceSyncer {
             .into_iter()
             .map(|x| self.clone().poll_device(x.id))
             .collect::<Vec<_>>();
-        for task in all_tasks {
-            task.await
-        }
+        join_all(all_tasks).await;
         Ok(())
     }
 
@@ -451,22 +447,25 @@ impl<'a> DeviceSyncer {
         }
     }
 
-    async fn broadcast_discovery_(self: Arc<Self>) -> Result<(), Box<dyn Error>> {
-        let devices = self.controller.list().await?;
-
-        let futures = devices
-            .into_iter()
-            .map(|d| self.clone().broadcast_device_discovery(d.id))
-            .collect::<Vec<_>>();
-        for f in futures {
-            f.await?;
-        }
-        Ok(())
+    async fn broadcast_device_discovery_quiet(self: Arc<Self>, id: DeviceId) {
+        self.broadcast_device_discovery(id)
+            .await
+            .log_failing_result("broadcast_device_discovery_failed");
     }
 
     async fn broadcast_discovery(self: Arc<Self>) -> () {
-        self.broadcast_discovery_()
-            .await
-            .log_failing_result("broadcast_discovery_failed");
+        let devices = match self.controller.list().await {
+            Ok(v) => v,
+            Err(e) => {
+                error!(slog_scope::logger(), "failed_to_list_devices"; "error" => ?e);
+                return ();
+            }
+        };
+
+        let futures = devices
+            .into_iter()
+            .map(|d| self.clone().broadcast_device_discovery_quiet(d.id))
+            .collect::<Vec<_>>();
+        join_all(futures).await;
     }
 }

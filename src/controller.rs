@@ -6,7 +6,7 @@ use crate::utils::Numberish;
 use regex::Regex;
 use serde::{Serialize, Serializer};
 use simple_error::{bail, simple_error};
-use slog::debug;
+use slog::{debug, error};
 use slog_scope;
 use std::collections::HashMap;
 use std::future::Future;
@@ -31,6 +31,7 @@ pub enum AttributeType {
     UInt8,
     UInt16,
     UInt32,
+    UInt64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -41,6 +42,7 @@ pub enum AttributeValue {
     UInt8(u8),
     UInt16(u16),
     UInt32(u32),
+    UInt64(u64),
 }
 
 impl AttributeType {
@@ -50,6 +52,7 @@ impl AttributeType {
             AttributeType::UInt8 => AttributeValue::UInt8(payload_str.parse::<u8>()?),
             AttributeType::UInt16 => AttributeValue::UInt16(payload_str.parse::<u16>()?),
             AttributeType::UInt32 => AttributeValue::UInt32(payload_str.parse::<u32>()?),
+            AttributeType::UInt64 => AttributeValue::UInt64(payload_str.parse::<u64>()?),
             AttributeType::String => AttributeValue::String(payload_str.to_string()),
             AttributeType::Bool => {
                 AttributeValue::Bool(match payload_str.to_ascii_lowercase().as_str() {
@@ -82,6 +85,10 @@ impl AttributeType {
                     .ok_or_else(|| simple_error!("{} is not a u64", n))?
                     .try_into()?,
             ),
+            (serde_json::Value::Number(n), AttributeType::UInt64) => AttributeValue::UInt64(
+                n.as_u64()
+                    .ok_or_else(|| simple_error!("{} is not a u64", n))?,
+            ),
             (serde_json::Value::Bool(v), AttributeType::Bool) => AttributeValue::Bool(*v),
             (v, _) => {
                 bail!("unknown value for type {:?}: {}", self, v);
@@ -99,6 +106,7 @@ impl AttributeValue {
             AttributeValue::UInt8(_) => Some(AttributeType::UInt8),
             AttributeValue::UInt16(_) => Some(AttributeType::UInt16),
             AttributeValue::UInt32(_) => Some(AttributeType::UInt32),
+            AttributeValue::UInt64(_) => Some(AttributeType::UInt64),
         }
     }
 
@@ -117,6 +125,7 @@ impl AttributeValue {
             AttributeValue::UInt8(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
             AttributeValue::UInt16(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
             AttributeValue::UInt32(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
+            AttributeValue::UInt64(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
             AttributeValue::String(s) => serde_json::Value::String(s.clone()),
         }
     }
@@ -234,6 +243,7 @@ fn parse_attr_value(t: AttributeType, v: &str) -> Result<AttributeValue, Box<dyn
             AttributeType::UInt8 => AttributeValue::UInt8(v.parse()?),
             AttributeType::UInt16 => AttributeValue::UInt16(v.parse()?),
             AttributeType::UInt32 => AttributeValue::UInt32(v.parse()?),
+            AttributeType::UInt64 => AttributeValue::UInt64(v.parse()?),
             AttributeType::Bool => AttributeValue::Bool(match v {
                 "TRUE" => true,
                 "FALSE" => false,
@@ -311,6 +321,7 @@ impl DeviceController for AprontestController {
                         "UINT8" => AttributeType::UInt8,
                         "UINT16" => AttributeType::UInt16,
                         "UINT32" => AttributeType::UInt32,
+                        "UINT64" => AttributeType::UInt64,
                         "BOOL" => AttributeType::Bool,
                         "STRING" => AttributeType::String,
                         _ => bail!("Bad attribute type: {}", m.name("type").unwrap().as_str()),
@@ -331,7 +342,14 @@ impl DeviceController for AprontestController {
                         )?,
                     })
                 })
-                .collect::<Result<Vec<DeviceAttribute>, Box<dyn Error>>>()?,
+                .filter_map(|v| match v {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        error!(slog_scope::logger(), "failed_to_parse_attribute"; "error" => ?e);
+                        None
+                    }
+                })
+                .collect::<Vec<DeviceAttribute>>(),
         })
     }
 
@@ -346,6 +364,7 @@ impl DeviceController for AprontestController {
             AttributeValue::UInt8(v) => format!("{}", v),
             AttributeValue::UInt16(v) => format!("{}", v),
             AttributeValue::UInt32(v) => format!("{}", v),
+            AttributeValue::UInt64(v) => format!("{}", v),
             AttributeValue::Bool(v) => if *v { "TRUE" } else { "FALSE" }.to_string(),
             AttributeValue::String(v) => v.clone(),
         };
@@ -731,6 +750,7 @@ New HA Dimmable Light
        61447 |                         PowerSource |  UINT8 |    R |                                1 |
       258048 |                        IdentifyTime | UINT16 |  R/W |                                0 |
      1699842 |               ZB_CurrentFileVersion | UINT32 |    R |                         33554952 |
+     1699843 |                 ArtificialAttribute | UINT64 |    R |                         33554952 |
   4294901760 |                   WK_TransitionTime | UINT16 |  R/W |                                  |
     "###;
 
@@ -739,13 +759,21 @@ New HA Dimmable Light
         let controller = controller_with_output(OTHER_TYPES_DESCRIBE);
 
         let result = controller.describe(2).await.unwrap();
-        assert_eq!(14, result.attributes.len());
+        assert_eq!(15, result.attributes.len());
         assert_eq!(
             AttributeType::UInt32,
-            result.attributes[result.attributes.len() - 2].attribute_type
+            result.attributes[result.attributes.len() - 3].attribute_type
         );
         assert_eq!(
             AttributeValue::UInt32(33554952),
+            result.attributes[result.attributes.len() - 3].current_value
+        );
+        assert_eq!(
+            AttributeType::UInt64,
+            result.attributes[result.attributes.len() - 2].attribute_type
+        );
+        assert_eq!(
+            AttributeValue::UInt64(33554952),
             result.attributes[result.attributes.len() - 2].current_value
         );
     }
@@ -760,9 +788,10 @@ New HA Dimmable Light
             AttributeValue::String("".into()),
             AttributeValue::Bool(true),
             AttributeValue::Bool(false),
-            AttributeValue::UInt8(u8::max_value()),
-            AttributeValue::UInt16(u16::max_value()),
-            AttributeValue::UInt32(u32::max_value()),
+            AttributeValue::UInt8(u8::MAX),
+            AttributeValue::UInt16(u16::MAX),
+            AttributeValue::UInt32(u32::MAX),
+            AttributeValue::UInt64(u64::MAX),
         ];
 
         for test in tests.iter() {
