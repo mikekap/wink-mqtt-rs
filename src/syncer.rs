@@ -12,7 +12,6 @@ use slog::{crit, debug, error, info, trace, warn};
 use slog_scope;
 use std::collections::{HashMap, VecDeque};
 use std::error::Error;
-use std::future::Future;
 use std::ops::Deref;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -363,7 +362,7 @@ impl<'a> DeviceSyncer {
             }
             Err(e) => {
                 crit!(slog_scope::logger(), "sending_failed_crashing_to_maybe_reconnect"; "error" => ?e);
-                panic!(e)
+                panic!("{:?}", e)
             }
         }
     }
