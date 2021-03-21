@@ -1,4 +1,4 @@
-## Next
+## 0.2.1
  - Added support for a UINT64 attribute type. (Closes #34)
  - Broadcast discovery for all devices, even if one in the middle fails.
  - Omit attributes from devices with unknown types.

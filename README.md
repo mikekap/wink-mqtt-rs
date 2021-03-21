@@ -22,7 +22,7 @@ You can configure more options by editing the `/opt/wink-mqtt-rs/config` file af
 
 ## Options
 ```bash
-wink-mqtt-rs 0.2.0
+wink-mqtt-rs 0.2.1
 Mike Kaplinskiy <mike.kaplinskiy@gmail.com>
 wink hub v1 mqtt bridge
 
