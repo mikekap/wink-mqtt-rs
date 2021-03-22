@@ -167,9 +167,75 @@ pub struct LongDevice {
     pub attributes: Vec<DeviceAttribute>,
 }
 
+#[derive(Debug, Eq, PartialEq, Serialize)]
+pub struct DeviceMeta {
+    pub manufacturer: String,
+    pub product: String,
+    pub version: String,
+}
+
 impl LongDevice {
-    pub fn attribute(&self, s: &str) -> Option<&DeviceAttribute> {
+    pub fn attribute<'a>(&'a self, s: &str) -> Option<&'a DeviceAttribute> {
         self.attributes.iter().find(|x| x.description == s)
+    }
+
+    pub fn attribute_str<'a>(&'a self, s: &str) -> Option<&'a str> {
+        match self.attribute(s) {
+            Some(attribute) => match &attribute.current_value {
+                AttributeValue::String(x) => Some(&x),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn device_meta(&self) -> DeviceMeta {
+        match (self.manufacturer_id, self.product_number, self.product_type) {
+            // You can get this information from e.g.
+            // http://www.openzwave.net/device-database/0063.3131.4944
+            (Some(0x0063), Some(0x3131), Some(0x4944)) => DeviceMeta {
+                manufacturer: "GE (Jasco Products)".to_string(),
+                product: "Fan Control Switch".to_string(),
+                version: "".to_string(),
+            },
+            (Some(0x0063), Some(0x3036), Some(0x4952)) => DeviceMeta {
+                manufacturer: "GE (Jasco Products)".to_string(),
+                product: "Switch".to_string(),
+                version: "".to_string(),
+            },
+            (Some(0x027a), Some(0xa001), Some(0xa000)) => DeviceMeta {
+                manufacturer: "Zooz".to_string(),
+                product: "S2 On Off Wall Switch".to_string(),
+                version: "".to_string(),
+            },
+            (Some(manufacturer_id), Some(product_number), Some(product_type)) => DeviceMeta {
+                manufacturer: format!("Unknown ({:04x})", manufacturer_id),
+                product: format!(
+                    "Unknown ({:04x}.{:04x}.{:04x})",
+                    manufacturer_id, product_number, product_type
+                ),
+                version: "".to_string(),
+            },
+            (None, None, None) => DeviceMeta {
+                manufacturer: self
+                    .attribute_str("ManufacturerName")
+                    .unwrap_or("")
+                    .to_string(),
+                product: self
+                    .attribute_str("ModelIdentifier")
+                    .unwrap_or("")
+                    .to_string(),
+                version: self
+                    .attribute("HWVersion")
+                    .map(|x| x.current_value.to_json().to_string())
+                    .unwrap_or_else(|| "".to_string()),
+            },
+            _ => DeviceMeta {
+                manufacturer: "Error".to_string(),
+                product: "Error".to_string(),
+                version: "".to_string(),
+            },
+        }
     }
 }
 
@@ -646,6 +712,19 @@ Bedroom Fan
         )
     }
 
+    #[tokio::test]
+    async fn device_meta() {
+        let controller = controller_with_output(TEST_DESCRIBE_STRING);
+        assert_eq!(
+            DeviceMeta {
+                manufacturer: "GE (Jasco Products)".to_string(),
+                product: "Fan Control Switch".to_string(),
+                version: "".to_string()
+            },
+            controller.describe(2).await.unwrap().device_meta()
+        )
+    }
+
     const TEST_OLD_LIST_STRING: &str = r###"
 Found 4 devices in database...
 MASTERID |     INTERCONNECT |                         USERNAME
@@ -776,6 +855,19 @@ New HA Dimmable Light
             AttributeValue::UInt64(33554952),
             result.attributes[result.attributes.len() - 2].current_value
         );
+    }
+
+    #[tokio::test]
+    async fn device_meta_zigbee() {
+        let controller = controller_with_output(OTHER_TYPES_DESCRIBE);
+        assert_eq!(
+            DeviceMeta {
+                manufacturer: "GE".to_string(),
+                product: "SoftWhite".to_string(),
+                version: "1".to_string()
+            },
+            controller.describe(2).await.unwrap().device_meta()
+        )
     }
 
     #[tokio::test]
