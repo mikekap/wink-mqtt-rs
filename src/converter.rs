@@ -1,5 +1,5 @@
 use crate::controller::{AttributeType, LongDevice};
-use serde_json::json;
+use serde_json::{json, Value};
 use simple_error::{bail, simple_error};
 use std::error::Error;
 
@@ -8,7 +8,22 @@ use crate::utils::ResultExtensions;
 
 pub struct AutodiscoveryMessage {
     pub component: &'static str,
-    pub discovery_info: serde_json::Value,
+    pub discovery_info: Value,
+}
+
+fn device_description(config: &Config, device: &LongDevice) -> Value {
+    let device_meta = device.device_meta();
+
+    return json!({
+        "name": device.name,
+        "identifiers": [format!("wink_{}", device.id)],
+        "connections": [["mqtt", config.to_topic_string(&TopicType::SetJsonTopic(device.id)).unwrap()]],
+        "manufacturer": device_meta.manufacturer,
+        "model": match device_meta.version.as_str() {
+            "" => device_meta.product,
+            version => format!("{} (v{})", device_meta.product, version)
+        },
+    });
 }
 
 pub fn device_to_discovery_payload(
@@ -61,6 +76,7 @@ fn switch_to_discovery_payload(
         discovery_info: json!({
             "platform": "mqtt",
             "unique_id": unique_id,
+            "device": device_description(config, device),
             "name": device.name,
             "state_topic": state_topic,
             "value_template": "{{ value_json.On_Off | upper }}",
@@ -108,6 +124,7 @@ fn dimmer_to_discovery_payload(
             "platform": "mqtt",
             "unique_id": unique_id,
             "name": device.name,
+            "device": device_description(config, device),
             "state_topic": state_topic,
             "state_value_template": "{% if value_json.Level > 0 %}1{% else %}0{% endif %}",
             "command_topic": command_topic,
