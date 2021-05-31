@@ -1,3 +1,6 @@
+## 0.2.2
+ - Include a device stanza in the autodiscovery payload to create devices (not just entities) in HA.
+
 ## 0.2.1
  - Added support for a UINT64 attribute type. (Closes #34)
  - Broadcast discovery for all devices, even if one in the middle fails.
