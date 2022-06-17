@@ -14,7 +14,7 @@ async-channel = "1.4"
 async-trait = "0.1.42"
 clap = "3.0.0-beta.1"
 futures = "0.3.13"
-hyper = {version = "0.13.9", features=["runtime", "tcp"], default-features=false}
+hyper = {version = "0.14.12", features=["runtime", "tcp"], default-features=false}
 lazy_static = "1.4.0"
 log = "*"
 regex = "1"
